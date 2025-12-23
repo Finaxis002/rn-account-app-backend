@@ -1,0 +1,25 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Uploads (if you have file uploads)
+uploads/
+
+# Build folders (if using TypeScript or bundler)
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor configs (optional)
+.vscode/
+.idea/
