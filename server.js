@@ -187,7 +187,7 @@ app.use("/api/profitloss", profitLossRoutes);
 app.use("/api/daily-stock-ledger", dailyStockLedgerRoutes);
 
 app.get("/", (req, res) => {
-  res.send("Account App CI/CD is working on New server(VPS) ......");
+  res.send("Account App CI/CD is working on New server(VPS) ......(Testing of Mobile App)");
 });
 
 app.get("/api/db-status", async (req, res) => {
