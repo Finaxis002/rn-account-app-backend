@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Permission = require("../models/Permission");
 const Client = require("../models/Client");
+const { broadcastToClient } = require("../websocketServer");
 
 const { isValidObjectId } = mongoose;
 
@@ -76,6 +77,9 @@ exports.upsertClientPermissions = async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     ).lean();
 
+    // Emit the updated permissions to all connected clients of this client
+    broadcastToClient(clientId, { type: 'PERMISSION_UPDATE', data: doc });
+
     return res.json(doc);
   } catch (err) {
     console.error(err);
@@ -112,8 +116,13 @@ exports.patchClientPermissions = async (req, res) => {
 
     if (!doc) {
       const created = await Permission.create({ client: clientId, ...update });
+      // Emit the updated permissions to all connected clients of this client
+      broadcastToClient(clientId, { type: 'PERMISSION_UPDATE', data: created });
       return res.json(created);
     }
+
+    // Emit the updated permissions to all connected clients of this client
+    broadcastToClient(clientId, { type: 'PERMISSION_UPDATE', data: doc });
 
     return res.json(doc);
   } catch (err) {

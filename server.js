@@ -5,6 +5,7 @@ const cors = require("cors");
 const path = require("path");
 const http = require("http");
 const socketIo = require("socket.io");
+const { setupWebSocketServer } = require("./websocketServer");
 const connectDB = require("./config/db");
 const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
@@ -84,6 +85,9 @@ const io = socketIo(server, {
     methods: ["GET", "POST"],
   },
 });
+
+// Setup WebSocket server using Socket.IO instance
+setupWebSocketServer(io);
 
 // Make io globally available for controllers
 global.io = io;
