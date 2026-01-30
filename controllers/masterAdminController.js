@@ -29,28 +29,76 @@ exports.registerMasterAdmin = async (req, res) => {
 };
 
 
-// Login
+// ✅✅✅ Login with Manual CAPTCHA Support ✅✅✅
 exports.loginMasterAdmin = async (req, res) => {
   try {
     const { username, password, captchaToken } = req.body;
-    // const { username, password } = req.body;
 
     // Validate input
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
     }
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // ✅ Support for manual letter-based CAPTCHA
+    if (captchaToken === "manual-captcha-verified") {
+      // Frontend ne CAPTCHA verify kar liya hai, proceed karo
+      const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
+
+      if (!admin) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Check if password exists for the admin
+      if (!admin.password) {
+        return res.status(401).json({ message: "Account not properly configured" });
+      }
+
+      const isMatch = await bcrypt.compare(password, admin.password);
+      if (!isMatch) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      const token = jwt.sign(
+        { id: admin._id, role: "master" },
+        process.env.JWT_SECRET,
+        { expiresIn: "1d" }
+      );
+
+      return res.status(200).json({
+        message: "Login successful",
+        token,
+        role: "master",
+        username: admin.username,
+        name: admin.name,
+        email: admin.email,
+        _id: admin._id,
+        admin: {
+          id: admin._id,
+          username: admin.username,
+          name: admin.name,
+          email: admin.email,
+          role: "master"
+        }
+      });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
+    // ❌ If manual CAPTCHA not verified, check for Google reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "CAPTCHA verification required" });
+    }
 
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // Optional: Google reCAPTCHA support
+    try {
+      const recaptchaResponse = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+      );
+
+      if (!recaptchaResponse.data.success) {
+        return res.status(400).json({ message: "reCAPTCHA verification failed" });
+      }
+    } catch (recaptchaError) {
+      console.error("reCAPTCHA verification error:", recaptchaError);
+      return res.status(400).json({ message: "CAPTCHA verification failed" });
     }
 
     const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
@@ -78,6 +126,11 @@ exports.loginMasterAdmin = async (req, res) => {
     res.status(200).json({
       message: "Login successful",
       token,
+      role: "master",
+      username: admin.username,
+      name: admin.name,
+      email: admin.email,
+      _id: admin._id,
       admin: {
         id: admin._id,
         username: admin.username,

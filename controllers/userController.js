@@ -92,7 +92,7 @@ function seedFromRole(roleDoc) {
     if (grantsAll || list.includes(key)) {
       seed[key] = true;     // set granted caps to true
     }
-    // don’t set anything for other keys -> they will remain schema default (null)
+    // don't set anything for other keys -> they will remain schema default (null)
   }
   return seed;
 }
@@ -395,51 +395,6 @@ exports.deleteUser = async (req, res) => {
 
 
 
-// exports.resetPassword = async (req, res) => {
-//   try {
-//     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
-//     const { oldPassword, newPassword } = req.body;
-
-//     if (!newPassword || newPassword.length < 6) {
-//       return res.status(400).json({ message: "New password is too short." });
-//     }
-
-//     const doc = await User.findById(userId);
-//     if (!doc) return res.status(404).json({ message: "User not found." });
-
-//     const actorRole = normalizeRoleName(req.user.role);
-//     const isPrivileged = actorRole === "admin" || actorRole === "master";
-//     const isSelf = String(req.user.id) === String(doc._id);
-
-//     const clientId = req.user.createdByClient || req.user.id;
-//     const isSameTenant = String(doc.createdByClient) === String(clientId);
-
-//     // permission to reset
-//     if (!isSelf && !(isPrivileged && isSameTenant)) {
-//       return res.status(403).json({ message: "Not authorized to reset this user's password" });
-//     }
-
-//     // if not privileged, must verify old password
-//     if (!isPrivileged) {
-//       if (!oldPassword) {
-//         return res.status(400).json({ message: "Current password is required." });
-//       }
-//       const ok = await bcrypt.compare(oldPassword, doc.password);
-//       if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
-//     }
-
-//     const salt = await bcrypt.genSalt(10);
-//     doc.password = await bcrypt.hash(newPassword, salt);
-//     doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
-//     await doc.save();
-
-//     return res.json({ message: "Password reset successfully." });
-//   } catch (error) {
-//     console.error("resetPassword error:", error);
-//     return res.status(500).json({ message: "Server error." });
-//   }
-// };
-
 exports.resetPassword = async (req, res) => {
   try {
     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
@@ -514,41 +469,93 @@ exports.getUsersByClient = async (req, res) => {
 
 
 
+// ✅✅✅ UPDATED LOGIN WITH MANUAL CAPTCHA SUPPORT ✅✅✅
 exports.loginUser = async (req, res) => {
   try {
-    const { userId, password , captchaToken } = req.body;
+    const { userId, password, captchaToken } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // ✅ Support for manual letter-based CAPTCHA
+    if (captchaToken === "manual-captcha-verified") {
+      // Frontend ne CAPTCHA verify kar liya hai, proceed karo
+      const user = await User.findOne({ userId })
+        .populate("companies")
+        .populate("role");
+
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+
+      // permissions = role.permissions ∪ user.permissions
+      const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
+
+      const token = jwt.sign(
+        {
+          id: user._id,
+          role: user.role?.name || "user",
+          roleId: user.role?._id,
+          perms,
+          companies: user.companies.map(c => c._id),
+          createdByClient: user.createdByClient
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "8h" }
+      );
+
+      return res.json({
+        token,
+        user: {
+          _id: user._id,
+          userName: user.userName,
+          userId: user.userId,
+          contactNumber: user.contactNumber,
+          address: user.address,
+          role: user.role?.name || "user",
+          permissions: perms,
+          createdByClient: user.createdByClient,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+          companies: user.companies,
+        },
+      });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
+    // ❌ If manual CAPTCHA not verified, check for Google reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "CAPTCHA verification required" });
+    }
 
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // Optional: Google reCAPTCHA support (agar future mein chahiye)
+    try {
+      const recaptchaResponse = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+      );
+
+      if (!recaptchaResponse.data.success) {
+        return res.status(400).json({ message: "reCAPTCHA verification failed" });
+      }
+    } catch (recaptchaError) {
+      console.error("reCAPTCHA verification error:", recaptchaError);
+      return res.status(400).json({ message: "CAPTCHA verification failed" });
     }
 
     const user = await User.findOne({ userId })
       .populate("companies")
-      .populate("role"); // 👈 important
+      .populate("role");
 
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
 
-    // permissions = role.permissions ∪ user.permissions
     const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
 
     const token = jwt.sign(
       {
         id: user._id,
-        role: user.role?.name || "user",      // 👈 role NAME for convenience
-        roleId: user.role?._id,               // 👈 role id
-        perms,                                // 👈 capabilities
+        role: user.role?.name || "user",
+        roleId: user.role?._id,
+        perms,
         companies: user.companies.map(c => c._id),
         createdByClient: user.createdByClient
       },
@@ -561,12 +568,19 @@ exports.loginUser = async (req, res) => {
       user: {
         _id: user._id,
         userName: user.userName,
-        role: user.role?.name || "user",     // 👈 send name, not ObjectId
+        userId: user.userId,
+        contactNumber: user.contactNumber,
+        address: user.address,
+        role: user.role?.name || "user",
+        permissions: perms,
+        createdByClient: user.createdByClient,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
         companies: user.companies,
       },
     });
   } catch (err) {
+    console.error("Login error:", err);
     res.status(500).json({ error: err.message });
   }
 };
-

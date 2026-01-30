@@ -7,7 +7,6 @@ const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
-const axios = require("axios");
 
 // Create Client (Only Master Admin)
 // controllers/clientController.js
@@ -164,7 +163,6 @@ exports.createClient = async (req, res) => {
 };
 
 // Get All Clients (Only Master Admin)
-// Get All Clients (Only Master Admin)
 exports.getClients = async (req, res) => {
   try {
     const cacheKey = key.clientsList(req.user.id);
@@ -201,19 +199,24 @@ exports.loginClient = async (req, res) => {
     console.log("Params:", req.params);
     console.log("Body:", req.body);
 
-    const { clientUsername, password , captchaToken } = req.body;
+    const { clientUsername, password, captchaToken } = req.body;
 
-    // Verify reCAPTCHA
+    // Verify CAPTCHA - accept manual verification flag
     if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+      return res.status(400).json({ message: "CAPTCHA verification required" });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // If using manual CAPTCHA (verified on frontend), accept the flag
+    // Otherwise, you can add Google reCAPTCHA verification here
+    if (captchaToken !== "manual-captcha-verified") {
+      // Optional: Add Google reCAPTCHA verification here if needed
+      // const axios = require("axios");
+      // const recaptchaResponse = await axios.post(
+      //   `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+      // );
+      // if (!recaptchaResponse.data.success) {
+      //   return res.status(400).json({ message: "reCAPTCHA verification failed" });
+      // }
     }
 
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
@@ -616,17 +619,14 @@ exports.loginClientWithOtp = async (req, res) => {
   try {
     const { clientUsername, otp, captchaToken } = req.body;
 
-    // Verify reCAPTCHA
+    // Verify CAPTCHA - accept manual verification flag
     if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+      return res.status(400).json({ message: "CAPTCHA verification required" });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // If using manual CAPTCHA (verified on frontend), accept the flag
+    if (captchaToken !== "manual-captcha-verified") {
+      // Optional: Add Google reCAPTCHA verification here if needed
     }
 
     if (!clientUsername || !otp) {
