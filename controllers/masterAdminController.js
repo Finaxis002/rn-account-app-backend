@@ -1,4 +1,4 @@
-const MasterAdmin = require('../models/MasterAdmin')
+const MasterAdmin = require("../models/MasterAdmin");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
@@ -18,7 +18,7 @@ exports.registerMasterAdmin = async (req, res) => {
     const newAdmin = new MasterAdmin({
       username,
       password: hashedPassword,
-      role: "master"  // optional, since schema sets default
+      role: "master", // optional, since schema sets default
     });
 
     await newAdmin.save();
@@ -28,88 +28,55 @@ exports.registerMasterAdmin = async (req, res) => {
   }
 };
 
-
 // ✅✅✅ Login with Manual CAPTCHA Support ✅✅✅
 exports.loginMasterAdmin = async (req, res) => {
   try {
     const { username, password, captchaToken } = req.body;
 
-    // Validate input
+    // 1. Check Platform from Headers (Same as user login)
+    const platform = req.headers["x-platform"]; // 'mobile' or 'web'
+
+    // Validate basic input
     if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+      return res
+        .status(400)
+        .json({ message: "Username and password are required" });
     }
 
-    // ✅ Support for manual letter-based CAPTCHA
-    if (captchaToken === "manual-captcha-verified") {
-      // Frontend ne CAPTCHA verify kar liya hai, proceed karo
-      const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
-
-      if (!admin) {
-        return res.status(401).json({ message: "Invalid credentials" });
+    // 2. reCAPTCHA Logic: Only if NOT mobile
+    if (platform !== "mobile") {
+      if (!captchaToken) {
+        return res
+          .status(400)
+          .json({ message: "reCAPTCHA verification required for web login" });
       }
 
-      // Check if password exists for the admin
-      if (!admin.password) {
-        return res.status(401).json({ message: "Account not properly configured" });
-      }
-
-      const isMatch = await bcrypt.compare(password, admin.password);
-      if (!isMatch) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-
-      const token = jwt.sign(
-        { id: admin._id, role: "master" },
-        process.env.JWT_SECRET,
-        { expiresIn: "1d" }
-      );
-
-      return res.status(200).json({
-        message: "Login successful",
-        token,
-        role: "master",
-        username: admin.username,
-        name: admin.name,
-        email: admin.email,
-        _id: admin._id,
-        admin: {
-          id: admin._id,
-          username: admin.username,
-          name: admin.name,
-          email: admin.email,
-          role: "master"
-        }
-      });
-    }
-
-    // ❌ If manual CAPTCHA not verified, check for Google reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "CAPTCHA verification required" });
-    }
-
-    // Optional: Google reCAPTCHA support
-    try {
       const recaptchaResponse = await axios.post(
-        `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+        `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`,
       );
 
       if (!recaptchaResponse.data.success) {
-        return res.status(400).json({ message: "reCAPTCHA verification failed" });
+        return res
+          .status(400)
+          .json({ message: "reCAPTCHA verification failed" });
       }
-    } catch (recaptchaError) {
-      console.error("reCAPTCHA verification error:", recaptchaError);
-      return res.status(400).json({ message: "CAPTCHA verification failed" });
+    } else {
+      console.log("📱 Skipping reCAPTCHA for Master Admin Mobile Login");
     }
 
-    const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
+    // 3. Admin Verification Logic
+    const admin = await MasterAdmin.findOne({
+      username: username.toLowerCase(),
+    });
 
     if (!admin) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    // Check if password exists for the admin
     if (!admin.password) {
-      return res.status(401).json({ message: "Account not properly configured" });
+      return res
+        .status(401)
+        .json({ message: "Account not properly configured" });
     }
 
     const isMatch = await bcrypt.compare(password, admin.password);
@@ -117,35 +84,29 @@ exports.loginMasterAdmin = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // 4. Token Generation
     const token = jwt.sign(
       { id: admin._id, role: "master" },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "1d" },
     );
 
     res.status(200).json({
       message: "Login successful",
       token,
-      role: "master",
-      username: admin.username,
-      name: admin.name,
-      email: admin.email,
-      _id: admin._id,
       admin: {
         id: admin._id,
         username: admin.username,
         name: admin.name,
         email: admin.email,
-        role: "master"
-      }
+        role: "master",
+      },
     });
-
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 };
-
 
 exports.getMasterAdminProfile = async (req, res) => {
   try {

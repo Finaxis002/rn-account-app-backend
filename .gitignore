@@ -1,1 +1,78 @@
-".env" 
+# -------------------------
+# Node Modules
+# -------------------------
+/node_modules
+
+# -------------------------
+# Environment Files
+# -------------------------
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# -------------------------
+# Logs
+# -------------------------
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# -------------------------
+# OS / Editor Files
+# -------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# -------------------------
+# Build / Output
+# -------------------------
+dist/
+build/
+coverage/
+
+# -------------------------
+# Temporary Files
+# -------------------------
+*.tmp
+*.temp
+
+# -------------------------
+# Uploads / Public Files
+# -------------------------
+uploads/
+public/uploads/
+
+# -------------------------
+# Baileys WhatsApp Sessions
+# -------------------------
+whatsapp-sessions/
+wwebjs_auth/
+.session/
+.session-data.json
+
+# -------------------------
+# Redis Dump (Optional)
+# -------------------------
+dump.rdb
+
+# -------------------------
+# PM2 Logs
+# -------------------------
+.pids
+*.pid
+*.seed
+*.pid.lock
+
+# -------------------------
+# Local Database Files
+# -------------------------
+*.sqlite
+*.db
