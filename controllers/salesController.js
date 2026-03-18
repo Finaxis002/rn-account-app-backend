@@ -1,4 +1,3 @@
-
 // controllers/salesController.js
 const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
@@ -82,12 +81,10 @@ function companyAllowedForUser(req, companyId) {
   return allowed.includes(String(companyId));
 }
 
-
-
 // Build message text per action
 function buildSalesNotificationMessage(
   action,
-  { actorName, partyName, invoiceNumber, amount }
+  { actorName, partyName, invoiceNumber, amount },
 ) {
   const pName = partyName || "Unknown Party";
   switch (action) {
@@ -134,7 +131,7 @@ async function notifyAdminOnSalesAction({
     action, // "create" | "update" | "delete"
     "sales", // entry type / category
     entryId, // sales entry id
-    req.auth.clientId
+    req.auth.clientId,
   );
 }
 
@@ -158,7 +155,7 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         companyId: salesEntry.company,
         clientId: salesEntry.client,
         status: { $in: ["active", "partial", "sold"] }, // Include sold/partial for remainingQty > 0 logic
-        remainingQuantity: { $gt: 0 }
+        remainingQuantity: { $gt: 0 },
       })
         .sort({ purchaseDate: 1 })
         .session(session);
@@ -181,14 +178,14 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         batch.consumedBySales.push({
           salesEntry: salesEntry._id,
           consumedQty: consumeQty,
-          consumedAt: new Date()
+          consumedAt: new Date(),
         });
 
         consumedBatches.push({
           batchId: batch._id,
           consumedQty: consumeQty,
           costPrice: batch.costPrice,
-          cogs: batchCOGS
+          cogs: batchCOGS,
         });
 
         if (batch.remainingQuantity === 0) {
@@ -198,37 +195,48 @@ async function consumeStockForSales(salesEntry, products, session = null) {
 
         await batch.save({ session });
       }
-      // 2.  LEGACY STOCK FALLBACK (CRITICAL FIX) 
+      // 2.  LEGACY STOCK FALLBACK (CRITICAL FIX)
       if (remainingQty > 0) {
         // Get product master stock
-        const productMaster = await Product.findById(productId).session(session);
+        const productMaster =
+          await Product.findById(productId).session(session);
         const masterStock = (productMaster && productMaster.stocks) || 0;
 
         // Calculate the quantity already consumed from *anywhere* (master or batches)
         const consumedPrior = quantityToConsume - remainingQty;
         // Calculate stock remaining in Product Master that hasn't been tracked by batches yet
-        const availableInBatches = activeBatches.reduce((sum, batch) => sum + batch.remainingQuantity, 0) + consumedPrior;
+        const availableInBatches =
+          activeBatches.reduce(
+            (sum, batch) => sum + batch.remainingQuantity,
+            0,
+          ) + consumedPrior;
 
-        const currentBatchedStock = activeBatches.reduce((sum, batch) => sum + batch.remainingQuantity, 0);
-
-
+        const currentBatchedStock = activeBatches.reduce(
+          (sum, batch) => sum + batch.remainingQuantity,
+          0,
+        );
 
         // Allow negative stock - consume even if masterStock is less than quantityToConsume
         const neededFromLegacy = remainingQty;
         const costPrice = productMaster.costPrice || 0;
 
-        const newLegacyBatch = await StockBatch.create([{
-          product: productId,
-          companyId: salesEntry.company,
-          clientId: salesEntry.client,
-          remainingQuantity: 0,
-          initialQuantity: neededFromLegacy,
-          costPrice: costPrice,
-          purchaseDate: new Date("2000-01-01"),
-          type: 'LEGACY_MIGRATION',
-          status: 'sold',
-          isActive: false
-        }], { session });
+        const newLegacyBatch = await StockBatch.create(
+          [
+            {
+              product: productId,
+              companyId: salesEntry.company,
+              clientId: salesEntry.client,
+              remainingQuantity: 0,
+              initialQuantity: neededFromLegacy,
+              costPrice: costPrice,
+              purchaseDate: new Date("2000-01-01"),
+              type: "LEGACY_MIGRATION",
+              status: "sold",
+              isActive: false,
+            },
+          ],
+          { session },
+        );
 
         const batchCOGS = neededFromLegacy * costPrice;
         itemCOGS += batchCOGS;
@@ -238,7 +246,7 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         newLegacyBatch[0].consumedBySales.push({
           salesEntry: salesEntry._id,
           consumedQty: neededFromLegacy,
-          consumedAt: new Date()
+          consumedAt: new Date(),
         });
         await newLegacyBatch[0].save({ session });
 
@@ -249,14 +257,18 @@ async function consumeStockForSales(salesEntry, products, session = null) {
           batchId: newLegacyBatch[0]._id,
           consumedQty: neededFromLegacy,
           costPrice: costPrice,
-          cogs: batchCOGS
+          cogs: batchCOGS,
         });
-        console.log(`[SUCCESS LEGACY] Consumed ${neededFromLegacy} units via new LEGACY batch creation. Master Stock was ${masterStock}.`);
+        console.log(
+          `[SUCCESS LEGACY] Consumed ${neededFromLegacy} units via new LEGACY batch creation. Master Stock was ${masterStock}.`,
+        );
       }
       // 3. --- No error thrown for negative stock - allow it ---
       // If remainingQty > 0, it means we need to allow negative stock
       if (remainingQty > 0) {
-        console.log(`🟠 Allowing negative stock: Available: ${masterStock}, Requested: ${quantityToConsume}, Shortage: ${remainingQty}`);
+        console.log(
+          `🟠 Allowing negative stock: Available: ${masterStock}, Requested: ${quantityToConsume}, Shortage: ${remainingQty}`,
+        );
         // The shortage will be handled by the product stock going negative
       }
       // 4. --- Update Product Master Stock (allow negative values) ---
@@ -269,7 +281,7 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         productId,
         quantity: quantityToConsume,
         cogs: itemCOGS,
-        batches: consumedBatches
+        batches: consumedBatches,
       });
     }
     return { consumptionResults, totalCOGS };
@@ -279,27 +291,38 @@ async function consumeStockForSales(salesEntry, products, session = null) {
   }
 }
 
-
-
-async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleCOGS, session = null) {
+async function updateDailyStockLedgerForSales(
+  salesEntry,
+  products,
+  currentSaleCOGS,
+  session = null,
+) {
   try {
     const salesDate = new Date(salesEntry.date);
     salesDate.setUTCHours(18, 30, 0, 0);
 
     // 1. Calculate Totals for THIS specific sale
-    const salesQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
-    const salesAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+    const salesQuantity = products.reduce(
+      (sum, item) => sum + item.quantity,
+      0,
+    );
+    const salesAmount = products.reduce(
+      (sum, item) => sum + item.quantity * item.pricePerUnit,
+      0,
+    );
 
     // 2. Fetch Latest Ledger (Opening Stock ke liye) - regardless of date gap
     const latestLedger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
       clientId: salesEntry.client,
-      date: { $lt: salesDate }   // Any date before sales date
+      date: { $lt: salesDate }, // Any date before sales date
     })
-      .sort({ date: -1 })           // Sort by date descending to get latest
+      .sort({ date: -1 }) // Sort by date descending to get latest
       .session(session);
 
-    const openingStockDefaults = latestLedger ? latestLedger.closingStock : { quantity: 0, amount: 0 };
+    const openingStockDefaults = latestLedger
+      ? latestLedger.closingStock
+      : { quantity: 0, amount: 0 };
 
     // ------------------------------------------------------------------
     // STEP 1: FIND OR CREATE LEDGER (FIXED FOR UNIQUE INDEX)
@@ -309,7 +332,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     let ledger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
       clientId: salesEntry.client,
-      date: salesDate
+      date: salesDate,
     }).session(session);
 
     if (!ledger) {
@@ -322,7 +345,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
         totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
         totalSalesOfTheDay: { quantity: 0, amount: 0 },
         totalCOGS: 0,
-        closingStock: { quantity: 0, amount: 0 }
+        closingStock: { quantity: 0, amount: 0 },
       });
       await ledger.save({ session });
     }
@@ -350,8 +373,8 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const totalCOGS = ledger.totalCOGS;
 
     // Calculation Formula: (Opening + Purchase) - Sales/COGS
-    const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
-    const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
+    const finalClosingQty = totalOpeningQty + totalPurchaseQty - totalSalesQty;
+    const finalClosingAmt = totalOpeningAmt + totalPurchaseAmt - totalCOGS;
 
     // Allow negative values for closing stock
     ledger.closingStock.quantity = finalClosingQty;
@@ -360,19 +383,15 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     // Save final state
     await ledger.save({ session });
 
-    console.log('✅ Daily Stock Ledger Updated Successfully');
-    console.log('   Closing Stock:', ledger.closingStock.quantity, 'units');
+    console.log("✅ Daily Stock Ledger Updated Successfully");
+    console.log("   Closing Stock:", ledger.closingStock.quantity, "units");
 
     return ledger;
-
   } catch (error) {
-    console.error('Error updating daily stock ledger:', error);
+    console.error("Error updating daily stock ledger:", error);
     throw error;
   }
 }
-
-
-
 
 async function reverseStockForSales(salesEntry, session = null) {
   try {
@@ -383,7 +402,7 @@ async function reverseStockForSales(salesEntry, session = null) {
 
     if (!stockImpact.length) {
       console.log(
-        `ℹ️ No stockImpact stored for sale entry ${saleId}. Skipping stock reversal.`
+        `ℹ️ No stockImpact stored for sale entry ${saleId}. Skipping stock reversal.`,
       );
       return { hadStockImpact: false, originalCOGS: 0 };
     }
@@ -408,12 +427,12 @@ async function reverseStockForSales(salesEntry, session = null) {
 
         // clean logs for this sale
         batch.consumedBySales = (batch.consumedBySales || []).filter(
-          log =>
+          (log) =>
             !(
               log.salesEntry &&
               log.salesEntry.toString() === saleId &&
               Number(log.consumedQty) === qty
-            )
+            ),
         );
 
         if (batch.remainingQuantity > 0 && batch.status === "sold") {
@@ -426,15 +445,13 @@ async function reverseStockForSales(salesEntry, session = null) {
         originalCOGS += qty * (b.costPrice || batch.costPrice || 0);
 
         if (productId) {
-          qtyByProduct.set(
-            productId,
-            (qtyByProduct.get(productId) || 0) + qty
-          );
+          qtyByProduct.set(productId, (qtyByProduct.get(productId) || 0) + qty);
         }
 
         console.log(
-          `🔁 Reversed batch ${batch._id}: +${qty} units @ ₹${b.costPrice || batch.costPrice
-          }`
+          `🔁 Reversed batch ${batch._id}: +${qty} units @ ₹${
+            b.costPrice || batch.costPrice
+          }`,
         );
       }
     }
@@ -446,13 +463,13 @@ async function reverseStockForSales(salesEntry, session = null) {
         product.stocks = (product.stocks || 0) + qty;
         await product.save({ session });
         console.log(
-          `🔁 Restored product stock: ${product.name} += ${qty} → ${product.stocks}`
+          `🔁 Restored product stock: ${product.name} += ${qty} → ${product.stocks}`,
         );
       }
     }
 
     console.log(
-      `✅ Stock reversal done for sale entry ${saleId}. Restored COGS: ₹${originalCOGS}`
+      `✅ Stock reversal done for sale entry ${saleId}. Restored COGS: ₹${originalCOGS}`,
     );
 
     return { hadStockImpact: true, originalCOGS };
@@ -462,9 +479,6 @@ async function reverseStockForSales(salesEntry, session = null) {
   }
 }
 
-
-
-
 /**
  * Reverse the daily stock ledger impact for a sales entry
  * using the ORIGINAL products & ORIGINAL COGS.
@@ -473,7 +487,7 @@ async function reverseDailyStockLedgerForSales(
   salesEntry,
   originalProducts,
   originalSaleCOGS,
-  session = null
+  session = null,
 ) {
   if (!Array.isArray(originalProducts) || !originalProducts.length) {
     console.log("ℹ️ No original products to reverse in ledger.");
@@ -481,7 +495,7 @@ async function reverseDailyStockLedgerForSales(
   }
 
   // Build "negative" products so updateDailyStockLedgerForSales subtracts them
-  const reversedProducts = originalProducts.map(p => {
+  const reversedProducts = originalProducts.map((p) => {
     const obj = p.toObject ? p.toObject() : p;
     const qty = Number(obj.quantity) || 0;
 
@@ -494,26 +508,23 @@ async function reverseDailyStockLedgerForSales(
 
     return {
       quantity: -Math.abs(qty),
-      pricePerUnit
+      pricePerUnit,
     };
   });
 
   const negativeCOGS = -Math.abs(originalSaleCOGS || 0);
 
   console.log(
-    `🔁 Reversing ledger for sale ${salesEntry._id} with negative qty and COGS: ₹${negativeCOGS}`
+    `🔁 Reversing ledger for sale ${salesEntry._id} with negative qty and COGS: ₹${negativeCOGS}`,
   );
 
   return updateDailyStockLedgerForSales(
     salesEntry,
     reversedProducts,
     negativeCOGS,
-    session
+    session,
   );
 }
-
-
-
 
 // exports.getSalesEntries = async (req, res) => {
 //   try {
@@ -587,7 +598,6 @@ async function reverseDailyStockLedgerForSales(
 //   }
 // };
 
-
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -629,7 +639,6 @@ exports.getSalesEntriesByClient = async (req, res) => {
   }
 };
 
-
 exports.getSalesEntries = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -641,22 +650,18 @@ exports.getSalesEntries = async (req, res) => {
     console.log("User ID:", user.id);
     console.log("Query companyId:", req.query.companyId);
 
-   
     if (role === "user") {
-      
       const canShowAllSales = caps?.canShowSaleEntries === true;
-      
+
       console.log("User permissions - canShowAllSales:", canShowAllSales);
       console.log("User caps:", caps);
-      
+
       if (!canShowAllSales) {
-       
         // console.log("User can only see their own entries. User ID:", userId);
         filter.createdByUser = userId;
       } else {
         console.log("User can see ALL sales entries");
       }
-      
     }
 
     // --- Company Filter Logic ---
@@ -664,7 +669,7 @@ exports.getSalesEntries = async (req, res) => {
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({
           success: false,
-          message: "Access denied"
+          message: "Access denied",
         });
       }
       filter.company = req.query.companyId;
@@ -676,7 +681,7 @@ exports.getSalesEntries = async (req, res) => {
           return res.status(200).json({
             success: true,
             count: 0,
-            data: []
+            data: [],
           });
         }
       }
@@ -695,12 +700,12 @@ exports.getSalesEntries = async (req, res) => {
     }
 
     // --- Dashboard Logic (no pagination) ---
-    const isDashboard = req.query.isDashboard === 'true';
+    const isDashboard = req.query.isDashboard === "true";
 
     if (isDashboard) {
       const entries = await SalesEntry.find(filter)
         .populate("party", "name")
-        .populate("products.product", "name productName") 
+        .populate("products.product", "name productName")
         .populate("party", "name")
         .sort({ date: -1, createdAt: -1, _id: -1 });
 
@@ -755,7 +760,7 @@ exports.getSalesEntries = async (req, res) => {
         totalPages,
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1,
-      }
+      },
     });
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
@@ -765,8 +770,8 @@ exports.getSalesEntries = async (req, res) => {
     });
   }
 };
- // 
- 
+//
+
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
@@ -812,7 +817,6 @@ exports.getSalesEntriesByClient = async (req, res) => {
       .json({ message: "Failed to fetch entries", error: err.message });
   }
 };
-
 
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -864,10 +868,10 @@ exports.createSalesEntry = async (req, res) => {
         notes,
         shippingAddress,
         bank,
-         advanceReceived,
-  extraDiscount,
-   extraDiscountType,
-  customRemark,
+        advanceReceived,
+        extraDiscount,
+        extraDiscountType,
+        customRemark,
       } = req.body;
 
       companyDoc = await Company.findOne({
@@ -890,7 +894,7 @@ exports.createSalesEntry = async (req, res) => {
         const { items, computedTotal, computedTax } = await normalizeProducts(
           products,
           req.auth.clientId,
-          req.auth.userId
+          req.auth.userId,
         );
         normalizedProducts = items;
         productsTotal = computedTotal;
@@ -904,23 +908,31 @@ exports.createSalesEntry = async (req, res) => {
       if (Array.isArray(services) && services.length > 0) {
         const { items, computedTotal, computedTax } = await normalizeServices(
           services,
-          req.auth.clientId
+          req.auth.clientId,
         );
         normalizedServices = items.map((item, i) => ({
           ...item,
           isAdditionalService: !!services[i]?.isAdditionalService,
-          serviceModel: services[i]?.isAdditionalService ? "AdditionalService" : "Service",
-          travelDate: services[i]?.travelDate
-            ? new Date(services[i].travelDate)
-            : services[i]?.serviceStartDate
-              ? new Date(services[i].serviceStartDate)
-              : item.travelDate,
+          serviceModel: services[i]?.isAdditionalService
+            ? "AdditionalService"
+            : "Service",
+          travelDate:
+            services[i]?.travelDate !== undefined
+              ? services[i].travelDate
+                ? new Date(services[i].travelDate)
+                : null
+              : services[i]?.serviceStartDate
+                ? new Date(services[i].serviceStartDate)
+                : (item.travelDate ?? null),
           travelFrom: services[i]?.travelFrom ?? item.travelFrom ?? "",
           travelTo: services[i]?.travelTo ?? item.travelTo ?? "",
           vehicleType: services[i]?.vehicleType ?? item.vehicleType ?? "",
           vehicleNumber: services[i]?.vehicleNumber ?? item.vehicleNumber ?? "",
           variableUnit:
-            services[i]?.variableUnit ?? item.variableUnit ?? item.unitType ?? "Km",
+            services[i]?.variableUnit ??
+            item.variableUnit ??
+            item.unitType ??
+            "Km",
           fixedCharges:
             services[i]?.fixedCharges !== undefined
               ? Number(services[i].fixedCharges) || 0
@@ -937,7 +949,7 @@ exports.createSalesEntry = async (req, res) => {
           variableCharges:
             services[i]?.variableCharges !== undefined
               ? Number(services[i].variableCharges) || 0
-              : item.variableCharges ?? 0,
+              : (item.variableCharges ?? 0),
           quantity: Number(services[i]?.quantity) || item.quantity || 1,
           unitType: services[i]?.unitType || item.unitType || "Hours",
           pricePerUnit:
@@ -946,12 +958,19 @@ exports.createSalesEntry = async (req, res) => {
             Number(services[i]?.fixedCharges) ||
             0,
           serviceStartDate:
-            services[i]?.serviceStartDate || services[i]?.travelDate
-              ? new Date(services[i]?.serviceStartDate || services[i]?.travelDate)
-              : item.serviceStartDate,
-          serviceDueDate: services[i]?.serviceDueDate
-            ? new Date(services[i].serviceDueDate)
-            : item.serviceDueDate,
+            services[i]?.serviceStartDate !== undefined
+              ? services[i].serviceStartDate
+                ? new Date(services[i].serviceStartDate)
+                : null
+              : services[i]?.travelDate
+                ? new Date(services[i].travelDate)
+                : (item.serviceStartDate ?? null),
+          serviceDueDate:
+            services[i]?.serviceDueDate !== undefined
+              ? services[i].serviceDueDate
+                ? new Date(services[i].serviceDueDate)
+                : null
+              : (item.serviceDueDate ?? null),
         }));
         servicesTotal = computedTotal;
         servicesTax = computedTax;
@@ -963,8 +982,6 @@ exports.createSalesEntry = async (req, res) => {
       const normalizedRegularServices = normalizedServices.filter(
         (s) => !s.isAdditionalService,
       );
-
-
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
@@ -995,7 +1012,7 @@ exports.createSalesEntry = async (req, res) => {
                 company: companyDoc._id,
                 client: req.auth.clientId,
                 date,
-              dueDate,
+                dueDate,
                 products: normalizedProducts,
                 services: normalizedRegularServices,
                 additionalServices: normalizedAdditionalServices.map((s) => ({
@@ -1003,8 +1020,11 @@ exports.createSalesEntry = async (req, res) => {
                   serviceName: s.serviceName,
                   amount: s.amount,
                   description: s.description,
-                  serviceStartDate: s.serviceStartDate || s.travelDate || null,
-                  serviceDueDate: s.serviceDueDate || null,
+                  serviceStartDate:
+                    s.serviceStartDate !== undefined
+                      ? s.serviceStartDate
+                      : (s.travelDate ?? null),
+                  serviceDueDate: s.serviceDueDate ?? null,
                 })),
                 totalAmount: finalTotal,
                 taxAmount: finalTaxAmount, // NEW: Save total tax amount
@@ -1027,21 +1047,22 @@ exports.createSalesEntry = async (req, res) => {
                 notes: notes || "",
                 shippingAddress: shippingAddress,
                 bank: bank,
-                  advanceReceived: Number(advanceReceived) || 0,
-                  extraDiscount: Number(extraDiscount) || 0,   
-      extraDiscountType: extraDiscountType || "fixed",
-netPayable: (() => {
-  const base = finalTotal;
-  const amt = extraDiscountType === "percentage"
-    ? +(base * (Number(extraDiscount) / 100)).toFixed(2)
-    : Number(extraDiscount) || 0;
-  return +(base - amt).toFixed(2);
-})(),
-      customRemark: customRemark || "",
-      // invoiceTotal: finalTotal, // ← invoiceTotal = finalTotal
+                advanceReceived: Number(advanceReceived) || 0,
+                extraDiscount: Number(extraDiscount) || 0,
+                extraDiscountType: extraDiscountType || "fixed",
+                netPayable: (() => {
+                  const base = finalTotal;
+                  const amt =
+                    extraDiscountType === "percentage"
+                      ? +(base * (Number(extraDiscount) / 100)).toFixed(2)
+                      : Number(extraDiscount) || 0;
+                  return +(base - amt).toFixed(2);
+                })(),
+                customRemark: customRemark || "",
+                // invoiceTotal: finalTotal, // ← invoiceTotal = finalTotal
               },
             ],
-            { session }
+            { session },
           );
 
           entry = docs[0];
@@ -1050,62 +1071,80 @@ netPayable: (() => {
             try {
               // Consume stock from batches (FIFO) - get both results and COGS
               // Consume stock and get exact batch-wise impact
-              const { consumptionResults, totalCOGS } = await consumeStockForSales(entry, normalizedProducts, session);
+              const { consumptionResults, totalCOGS } =
+                await consumeStockForSales(entry, normalizedProducts, session);
 
               // 🔥 SAVE THE IMPACT SO UPDATE CAN REVERSE IT PERFECTLY
               entry.stockImpact = consumptionResults;
               await entry.save({ session });
 
               // Update daily stock ledger AFTER stockImpact is saved
-              await updateDailyStockLedgerForSales(entry, normalizedProducts, totalCOGS, session);
+              await updateDailyStockLedgerForSales(
+                entry,
+                normalizedProducts,
+                totalCOGS,
+                session,
+              );
 
-
-              console.log(`✅ Stock consumed for sales: ${consumptionResults.length} products, Total COGS: ₹${totalCOGS}`);
-
+              console.log(
+                `✅ Stock consumed for sales: ${consumptionResults.length} products, Total COGS: ₹${totalCOGS}`,
+              );
 
               // Socket emit for sale creation
               try {
                 if (global.io) {
-                  console.log('📡 Emitting transaction-update (create sale)...');
+                  console.log(
+                    "📡 Emitting transaction-update (create sale)...",
+                  );
 
-                  const customerName = partyDoc?.name || 'Unknown Customer';
+                  const customerName = partyDoc?.name || "Unknown Customer";
 
                   const socketPayload = {
-                    message: 'New Sale Entry',
-                    type: 'sale',
-                    action: 'create',
+                    message: "New Sale Entry",
+                    type: "sale",
+                    action: "create",
                     entryId: entry._id,
                     amount: entry.totalAmount,
-                    customerName: customerName
+                    customerName: customerName,
                   };
 
                   // Emit to Client Room
-                  global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+                  global.io
+                    .to(`client-${req.auth.clientId}`)
+                    .emit("transaction-update", socketPayload);
 
                   // Emit to Global/Admin Room
-                  global.io.to('all-transactions-updates').emit('transaction-update', {
-                    ...socketPayload,
-                    clientId: req.auth.clientId
-                  });
+                  global.io
+                    .to("all-transactions-updates")
+                    .emit("transaction-update", {
+                      ...socketPayload,
+                      clientId: req.auth.clientId,
+                    });
 
                   // Optional: Emit for inventory updates
                   if (entry.company) {
-                    global.io.to(`company-${entry.company.toString()}`).emit('inventory-update', {
-                      message: 'Sale entry created',
-                      entryId: entry._id,
-                      companyId: entry.company.toString(),
-                      clientId: req.auth.clientId,
-                      type: 'sale'
-                    });
+                    global.io
+                      .to(`company-${entry.company.toString()}`)
+                      .emit("inventory-update", {
+                        message: "Sale entry created",
+                        entryId: entry._id,
+                        companyId: entry.company.toString(),
+                        clientId: req.auth.clientId,
+                        type: "sale",
+                      });
                   }
                 }
               } catch (socketError) {
-                console.error("⚠️ Socket Emit Failed (Sale Create):", socketError.message);
+                console.error(
+                  "⚠️ Socket Emit Failed (Sale Create):",
+                  socketError.message,
+                );
               }
-
             } catch (stockError) {
-              console.error('Error in stock consumption:', stockError);
-              throw new Error(`Stock consumption failed: ${stockError.message}`);
+              console.error("Error in stock consumption:", stockError);
+              throw new Error(
+                `Stock consumption failed: ${stockError.message}`,
+              );
             }
           }
 
@@ -1116,12 +1155,14 @@ netPayable: (() => {
               {
                 $inc: {
                   // Update company-specific balance
-                  [`balances.${companyDoc._id}`]: entry.totalAmount
-                }
+                  [`balances.${companyDoc._id}`]: entry.totalAmount,
+                },
               },
-              { session }
+              { session },
             );
-            console.log(`✅ Updated party balance for company ${companyDoc._id}: +${entry.totalAmount}`);
+            console.log(
+              `✅ Updated party balance for company ${companyDoc._id}: +${entry.totalAmount}`,
+            );
           }
 
           // Ensure only one response is sent
@@ -1149,7 +1190,7 @@ netPayable: (() => {
                   prefix,
                 },
               ],
-              { session }
+              { session },
             );
 
             // Send response after notification creation
@@ -1181,8 +1222,6 @@ netPayable: (() => {
 const sameTenant = (entryClientId, userClientId) => {
   return entryClientId.toString() === userClientId.toString();
 };
-
-
 
 // exports.updateSalesEntry = async (req, res) => {
 //   const session = await mongoose.startSession();
@@ -1321,10 +1360,10 @@ const sameTenant = (entryClientId, userClientId) => {
 //           const amountDifference = currentTotalAmount - originalTotalAmount;
 //           await Party.findByIdAndUpdate(
 //             currentPartyId,
-//             { 
-//               $inc: { 
+//             {
+//               $inc: {
 //                 [`balances.${currentCompanyId}`]: amountDifference
-//               } 
+//               }
 //             },
 //             { session }
 //           );
@@ -1335,10 +1374,10 @@ const sameTenant = (entryClientId, userClientId) => {
 //           // Remove from original party's company balance
 //           await Party.findByIdAndUpdate(
 //             originalPartyId,
-//             { 
-//               $inc: { 
+//             {
+//               $inc: {
 //                 [`balances.${originalCompanyId}`]: -originalTotalAmount
-//               } 
+//               }
 //             },
 //             { session }
 //           );
@@ -1347,10 +1386,10 @@ const sameTenant = (entryClientId, userClientId) => {
 //           // Add to current party's company balance
 //           await Party.findByIdAndUpdate(
 //             currentPartyId,
-//             { 
-//               $inc: { 
+//             {
+//               $inc: {
 //                 [`balances.${currentCompanyId}`]: currentTotalAmount
-//               } 
+//               }
 //             },
 //             { session }
 //           );
@@ -1360,10 +1399,10 @@ const sameTenant = (entryClientId, userClientId) => {
 //         // Changed from Credit to non-Credit - remove from original party's company balance
 //         await Party.findByIdAndUpdate(
 //           originalPartyId,
-//           { 
-//             $inc: { 
+//           {
+//             $inc: {
 //               [`balances.${originalCompanyId}`]: -originalTotalAmount
-//             } 
+//             }
 //           },
 //           { session }
 //         );
@@ -1372,10 +1411,10 @@ const sameTenant = (entryClientId, userClientId) => {
 //         // Changed from non-Credit to Credit - add to current party's company balance
 //         await Party.findByIdAndUpdate(
 //           currentPartyId,
-//           { 
-//             $inc: { 
+//           {
+//             $inc: {
 //               [`balances.${currentCompanyId}`]: currentTotalAmount
-//             } 
+//             }
 //           },
 //           { session }
 //         );
@@ -1421,7 +1460,6 @@ const sameTenant = (entryClientId, userClientId) => {
 //   }
 // };
 
-
 exports.updateSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let updatedEntry;
@@ -1442,15 +1480,18 @@ exports.updateSalesEntry = async (req, res) => {
     }
 
     // Tenant auth: allow privileged roles or same tenant only
-    if (!userIsPriv(req) && !sameTenant(existingEntry.client, req.auth.clientId)) {
+    if (
+      !userIsPriv(req) &&
+      !sameTenant(existingEntry.client, req.auth.clientId)
+    ) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     // Snapshot original data for reversal
     const originalProducts = Array.isArray(existingEntry.products)
-      ? existingEntry.products.map(p =>
-        p.toObject ? p.toObject() : { ...p }
-      )
+      ? existingEntry.products.map((p) =>
+          p.toObject ? p.toObject() : { ...p },
+        )
       : [];
 
     const {
@@ -1462,8 +1503,8 @@ exports.updateSalesEntry = async (req, res) => {
       party,
       shippingAddress,
       bank,
-      discountType,  
-  discountValue,
+      discountType,
+      discountValue,
       ...otherUpdates
     } = req.body;
 
@@ -1485,7 +1526,7 @@ exports.updateSalesEntry = async (req, res) => {
       }
       const company = await Company.findOne({
         _id: otherUpdates.company,
-        client: req.auth.clientId
+        client: req.auth.clientId,
       });
       if (!company) {
         return res.status(400).json({ message: "Invalid company selected" });
@@ -1497,7 +1538,7 @@ exports.updateSalesEntry = async (req, res) => {
     if (otherUpdates.party) {
       partyDoc = await Party.findOne({
         _id: otherUpdates.party,
-        createdByClient: req.auth.clientId
+        createdByClient: req.auth.clientId,
       });
       if (!partyDoc) {
         return res
@@ -1524,7 +1565,7 @@ exports.updateSalesEntry = async (req, res) => {
           entry,
           originalProducts,
           originalCOGS,
-          session
+          session,
         );
       }
 
@@ -1541,75 +1582,91 @@ exports.updateSalesEntry = async (req, res) => {
       }
 
       // Normalize service lines only if provided
-    // In updateSalesEntry function, find this section:
-if (Array.isArray(services)) {
-  const { items: normalizedServices, computedTotal } =
-    await normalizeServices(services, req.auth.clientId);
-  const expandedServices = normalizedServices.map((item, i) => ({
-    ...item,
-    isAdditionalService: !!services[i]?.isAdditionalService,
-    serviceModel: services[i]?.isAdditionalService ? "AdditionalService" : "Service",
-    travelDate: services[i]?.travelDate
-      ? new Date(services[i].travelDate)
-      : services[i]?.serviceStartDate
-      ? new Date(services[i].serviceStartDate)
-      : item.travelDate,
-    travelFrom: services[i]?.travelFrom ?? item.travelFrom ?? "",
-    travelTo: services[i]?.travelTo ?? item.travelTo ?? "",
-    vehicleType: services[i]?.vehicleType ?? item.vehicleType ?? "",
-    vehicleNumber: services[i]?.vehicleNumber ?? item.vehicleNumber ?? "",
-    variableUnit:
-      services[i]?.variableUnit ?? item.variableUnit ?? item.unitType ?? "Km",
-    fixedCharges:
-      services[i]?.fixedCharges !== undefined
-        ? Number(services[i].fixedCharges) || 0
-        : Number(item.fixedCharges ?? services[i]?.pricePerUnit ?? 0) ||
-          0,
-    variableQty:
-      services[i]?.variableQty !== undefined
-        ? Number(services[i].variableQty) || 0
-        : Number(item.variableQty ?? 0) || 0,
-    variableRate:
-      services[i]?.variableRate !== undefined
-        ? Number(services[i].variableRate) || 0
-        : Number(item.variableRate ?? 0) || 0,
-    variableCharges:
-      services[i]?.variableCharges !== undefined
-        ? Number(services[i].variableCharges) || 0
-        : item.variableCharges ?? 0,
-    quantity: Number(services[i]?.quantity) || item.quantity || 1,
-    unitType: services[i]?.unitType || item.unitType || "Hours",
-    pricePerUnit:
-      Number(services[i]?.pricePerUnit) ||
-      item.pricePerUnit ||
-      Number(services[i]?.fixedCharges) ||
-      0,
-    serviceStartDate:
-      services[i]?.serviceStartDate || services[i]?.travelDate
-        ? new Date(services[i]?.serviceStartDate || services[i]?.travelDate)
-        : item.serviceStartDate,
-    serviceDueDate: services[i]?.serviceDueDate
-      ? new Date(services[i].serviceDueDate)
-      : item.serviceDueDate,
-  }));
-  
-  // Split into regular and additional services
-  entry.services = expandedServices.filter((s) => !s.isAdditionalService);
-  
-  // 🔴 FIX: Include serviceName when mapping additional services
-  entry.additionalServices = expandedServices
-    .filter((s) => s.isAdditionalService)
-    .map((s) => ({
-      service: s.service,
-      serviceName: s.serviceName, // Add this field
-      amount: s.amount,
-      description: s.description,
-      serviceCost: s.serviceCost,
-      serviceStartDate: s.serviceStartDate || s.travelDate || null,
-      serviceDueDate: s.serviceDueDate || null,
-    }));
-  servicesTotal = computedTotal;
-}
+      // In updateSalesEntry function, find this section:
+      if (Array.isArray(services)) {
+        const { items: normalizedServices, computedTotal } =
+          await normalizeServices(services, req.auth.clientId);
+        const expandedServices = normalizedServices.map((item, i) => ({
+          ...item,
+          isAdditionalService: !!services[i]?.isAdditionalService,
+          serviceModel: services[i]?.isAdditionalService
+            ? "AdditionalService"
+            : "Service",
+          travelDate: services[i]?.travelDate
+            ? new Date(services[i].travelDate)
+            : services[i]?.serviceStartDate
+              ? new Date(services[i].serviceStartDate)
+              : item.travelDate,
+          travelFrom: services[i]?.travelFrom ?? item.travelFrom ?? "",
+          travelTo: services[i]?.travelTo ?? item.travelTo ?? "",
+          vehicleType: services[i]?.vehicleType ?? item.vehicleType ?? "",
+          vehicleNumber: services[i]?.vehicleNumber ?? item.vehicleNumber ?? "",
+          variableUnit:
+            services[i]?.variableUnit ??
+            item.variableUnit ??
+            item.unitType ??
+            "Km",
+          fixedCharges:
+            services[i]?.fixedCharges !== undefined
+              ? Number(services[i].fixedCharges) || 0
+              : Number(item.fixedCharges ?? services[i]?.pricePerUnit ?? 0) ||
+                0,
+          variableQty:
+            services[i]?.variableQty !== undefined
+              ? Number(services[i].variableQty) || 0
+              : Number(item.variableQty ?? 0) || 0,
+          variableRate:
+            services[i]?.variableRate !== undefined
+              ? Number(services[i].variableRate) || 0
+              : Number(item.variableRate ?? 0) || 0,
+          variableCharges:
+            services[i]?.variableCharges !== undefined
+              ? Number(services[i].variableCharges) || 0
+              : (item.variableCharges ?? 0),
+          quantity: Number(services[i]?.quantity) || item.quantity || 1,
+          unitType: services[i]?.unitType || item.unitType || "Hours",
+          pricePerUnit:
+            Number(services[i]?.pricePerUnit) ||
+            item.pricePerUnit ||
+            Number(services[i]?.fixedCharges) ||
+            0,
+          // Accept explicit null to clear stored dates
+          serviceStartDate:
+            services[i]?.serviceStartDate !== undefined
+              ? services[i].serviceStartDate
+                ? new Date(services[i].serviceStartDate)
+                : null
+              : services[i]?.travelDate
+                ? new Date(services[i].travelDate)
+                : (item.serviceStartDate ?? null),
+          serviceDueDate:
+            services[i]?.serviceDueDate !== undefined
+              ? services[i].serviceDueDate
+                ? new Date(services[i].serviceDueDate)
+                : null
+              : (item.serviceDueDate ?? null),
+        }));
+
+        // Split into regular and additional services
+        entry.services = expandedServices.filter((s) => !s.isAdditionalService);
+
+        // 🔴 FIX: Include serviceName when mapping additional services
+        entry.additionalServices = expandedServices
+          .filter((s) => s.isAdditionalService)
+          .map((s) => ({
+            service: s.service,
+            serviceName: s.serviceName, // Add this field
+            amount: s.amount,
+            description: s.description,
+            serviceCost: s.serviceCost,
+            serviceStartDate:
+              s.serviceStartDate !== undefined
+                ? s.serviceStartDate
+                : (s.travelDate ?? null),
+            serviceDueDate: s.serviceDueDate ?? null,
+          }));
+        servicesTotal = computedTotal;
+      }
 
       // Don't allow changing invoiceNumber/year from payload
       const { invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } =
@@ -1618,8 +1675,8 @@ if (Array.isArray(services)) {
       if (typeof gstRate === "number") {
         entry.gstPercentage = gstRate;
       }
-      if (discountType) entry.discountType = discountType;   
-if (discountValue !== undefined) entry.discountValue = discountValue; 
+      if (discountType) entry.discountType = discountType;
+      if (discountValue !== undefined) entry.discountValue = discountValue;
       if (notes !== undefined) {
         entry.notes = notes;
       }
@@ -1647,18 +1704,12 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
         const sumProducts =
           productsTotal ||
           (Array.isArray(entry.products)
-            ? entry.products.reduce(
-              (s, it) => s + (Number(it.amount) || 0),
-              0
-            )
+            ? entry.products.reduce((s, it) => s + (Number(it.amount) || 0), 0)
             : 0);
         const sumServices =
           servicesTotal ||
           (Array.isArray(entry.services)
-            ? entry.services.reduce(
-              (s, it) => s + (Number(it.amount) || 0),
-              0
-            )
+            ? entry.services.reduce((s, it) => s + (Number(it.amount) || 0), 0)
             : 0);
         entry.totalAmount = sumProducts + sumServices;
       }
@@ -1669,7 +1720,7 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
         const { consumptionResults, totalCOGS } = await consumeStockForSales(
           entry,
           entry.products,
-          session
+          session,
         );
 
         // 🔐 Save fresh stock impact for this updated sale
@@ -1680,13 +1731,12 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
           entry,
           entry.products,
           newCOGS,
-          session
+          session,
         );
       } else {
         // no products → clear any old impact
         entry.stockImpact = [];
       }
-
 
       // 4️⃣ CREDIT BALANCE ADJUSTMENT (company-specific balances) INSIDE SAME TXN
       const currentPartyId = party || originalPartyId;
@@ -1710,13 +1760,13 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
             currentPartyId,
             {
               $inc: {
-                [`balances.${currentCompanyId}`]: amountDifference
-              }
+                [`balances.${currentCompanyId}`]: amountDifference,
+              },
             },
-            { session }
+            { session },
           );
           console.log(
-            `✅ Updated party balance for same company: ${currentCompanyId}, difference: ${amountDifference}`
+            `✅ Updated party balance for same company: ${currentCompanyId}, difference: ${amountDifference}`,
           );
         } else {
           // Different parties or different companies
@@ -1724,26 +1774,26 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
             originalPartyId,
             {
               $inc: {
-                [`balances.${originalCompanyId}`]: -originalTotalAmount
-              }
+                [`balances.${originalCompanyId}`]: -originalTotalAmount,
+              },
             },
-            { session }
+            { session },
           );
           console.log(
-            `✅ Removed from original party/company: ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`
+            `✅ Removed from original party/company: ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`,
           );
 
           await Party.findByIdAndUpdate(
             currentPartyId,
             {
               $inc: {
-                [`balances.${currentCompanyId}`]: currentTotalAmount
-              }
+                [`balances.${currentCompanyId}`]: currentTotalAmount,
+              },
             },
-            { session }
+            { session },
           );
           console.log(
-            `✅ Added to current party/company: ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`
+            `✅ Added to current party/company: ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`,
           );
         }
       } else if (
@@ -1755,13 +1805,13 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
           originalPartyId,
           {
             $inc: {
-              [`balances.${originalCompanyId}`]: -originalTotalAmount
-            }
+              [`balances.${originalCompanyId}`]: -originalTotalAmount,
+            },
           },
-          { session }
+          { session },
         );
         console.log(
-          `✅ Removed credit balance (changed to non-credit): ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`
+          `✅ Removed credit balance (changed to non-credit): ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`,
         );
       } else if (
         originalPaymentMethod !== "Credit" &&
@@ -1772,17 +1822,17 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
           currentPartyId,
           {
             $inc: {
-              [`balances.${currentCompanyId}`]: currentTotalAmount
-            }
+              [`balances.${currentCompanyId}`]: currentTotalAmount,
+            },
           },
-          { session }
+          { session },
         );
         console.log(
-          `✅ Added credit balance (changed to credit): ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`
+          `✅ Added credit balance (changed to credit): ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`,
         );
       } else {
         console.log(
-          `ℹ️ No balance adjustment needed - both payment methods are non-credit`
+          `ℹ️ No balance adjustment needed - both payment methods are non-credit`,
         );
       }
 
@@ -1792,29 +1842,34 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
       // Socket emit for sale update
       try {
         if (global.io) {
-          console.log('📡 Emitting transaction-update (update sale)...');
+          console.log("📡 Emitting transaction-update (update sale)...");
 
           // Get customer name
           const customerDoc = await Party.findById(updatedEntry.party);
-          const customerName = customerDoc?.name || 'Unknown Customer';
+          const customerName = customerDoc?.name || "Unknown Customer";
 
           const socketPayload = {
-            message: 'Sale Entry Updated',
-            type: 'sale',
-            action: 'update',
+            message: "Sale Entry Updated",
+            type: "sale",
+            action: "update",
             entryId: updatedEntry._id,
             amount: updatedEntry.totalAmount,
-            customerName: customerName
+            customerName: customerName,
           };
 
-          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
-          global.io.to('all-transactions-updates').emit('transaction-update', {
+          global.io
+            .to(`client-${req.auth.clientId}`)
+            .emit("transaction-update", socketPayload);
+          global.io.to("all-transactions-updates").emit("transaction-update", {
             ...socketPayload,
-            clientId: req.auth.clientId
+            clientId: req.auth.clientId,
           });
         }
       } catch (socketError) {
-        console.error("⚠️ Socket Emit Failed (Sale Update):", socketError.message);
+        console.error(
+          "⚠️ Socket Emit Failed (Sale Update):",
+          socketError.message,
+        );
       }
     });
 
@@ -1834,7 +1889,7 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
       action: "update",
       partyName,
       entryId: updatedEntry._id,
-      companyId: updatedEntry.company?.toString()
+      companyId: updatedEntry.company?.toString(),
     });
 
     const companyId = updatedEntry.company.toString();
@@ -1844,7 +1899,7 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
 
     res.json({
       message: "Sales entry updated successfully",
-      entry: updatedEntry
+      entry: updatedEntry,
     });
   } catch (err) {
     console.error("Error updating sales entry:", err);
@@ -1853,8 +1908,6 @@ if (discountValue !== undefined) entry.discountValue = discountValue;
     session.endSession();
   }
 };
-
-
 
 exports.deleteSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1889,31 +1942,34 @@ exports.deleteSalesEntry = async (req, res) => {
     await session.withTransaction(async () => {
       // 🟢🟢🟢 ADD FIFO STOCK REVERSAL LOGIC HERE 🟢🟢🟢
       if (entry.stockImpact && entry.stockImpact.length > 0) {
-
-        console.log("🟡 Starting FIFO stock reversal for DELETE using stockImpact...");
+        console.log(
+          "🟡 Starting FIFO stock reversal for DELETE using stockImpact...",
+        );
 
         // Reverse exact batch-wise consumption
-        const { hadStockImpact, originalCOGS } = await reverseStockForSales(entry, session);
+        const { hadStockImpact, originalCOGS } = await reverseStockForSales(
+          entry,
+          session,
+        );
 
         if (hadStockImpact) {
           // Build original products WITH NEGAIVE QUANTITIES from stockImpact
-          const originalProducts = entry.stockImpact.map(p => ({
+          const originalProducts = entry.stockImpact.map((p) => ({
             quantity: p.quantity, // this is original consumed qty
-            pricePerUnit: p.cogs / p.quantity
+            pricePerUnit: p.cogs / p.quantity,
           }));
 
           await reverseDailyStockLedgerForSales(
             entry,
-            entry.products,   // <-- use the real sales line items
+            entry.products, // <-- use the real sales line items
             originalCOGS,
-            session
+            session,
           );
-
         }
 
         console.log("✅ Stock & ledger reversal successful for DELETE.");
       }
-            // Retrieve companyId and clientId from the sales entry to delete related cache
+      // Retrieve companyId and clientId from the sales entry to delete related cache
       const companyId = entry.company.toString();
 
       // 🟢🟢🟢 REVERSE CREDIT BALANCE IF PAYMENT WAS CREDIT 🟢🟢🟢
@@ -1923,12 +1979,14 @@ exports.deleteSalesEntry = async (req, res) => {
             entry.party,
             {
               $inc: {
-                [`balances.${companyId}`]: -totalAmount
-              }
+                [`balances.${companyId}`]: -totalAmount,
+              },
             },
-            { session }
+            { session },
           );
-          console.log(`✅ Reversed credit balance for customer ${entry.party}: -${totalAmount}`);
+          console.log(
+            `✅ Reversed credit balance for customer ${entry.party}: -${totalAmount}`,
+          );
         } catch (creditError) {
           console.error("❌ Error reversing credit balance:", creditError);
           throw creditError; // Re-throw to ensure transaction rolls back
@@ -1938,37 +1996,38 @@ exports.deleteSalesEntry = async (req, res) => {
       // Delete the sales entry
       await entry.deleteOne();
 
-
-
       // Socket emit for sale deletion
       try {
         if (global.io) {
-          console.log('📡 Emitting transaction-update (delete sale)...');
+          console.log("📡 Emitting transaction-update (delete sale)...");
 
           const customerDoc = await Party.findById(entry.party);
-          const customerName = customerDoc?.name || 'Unknown Customer';
+          const customerName = customerDoc?.name || "Unknown Customer";
 
           const socketPayload = {
-            message: 'Sale Entry Deleted',
-            type: 'sale',
-            action: 'delete',
+            message: "Sale Entry Deleted",
+            type: "sale",
+            action: "delete",
             entryId: entry._id,
-            customerName: customerName
+            customerName: customerName,
           };
 
-          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
-          global.io.to('all-transactions-updates').emit('transaction-update', {
+          global.io
+            .to(`client-${req.auth.clientId}`)
+            .emit("transaction-update", socketPayload);
+          global.io.to("all-transactions-updates").emit("transaction-update", {
             ...socketPayload,
-            clientId: req.auth.clientId
+            clientId: req.auth.clientId,
           });
         }
       } catch (socketError) {
-        console.error("⚠️ Socket Emit Failed (Sale Delete):", socketError.message);
+        console.error(
+          "⚠️ Socket Emit Failed (Sale Delete):",
+          socketError.message,
+        );
       }
 
       // ⬆️⬆️⬆️ END OF ADDED CODE ⬆️⬆️⬆️
-
-
 
       await notifyAdminOnSalesAction({
         req,
@@ -1990,8 +2049,6 @@ exports.deleteSalesEntry = async (req, res) => {
   }
 };
 
-
-
 exports.getSalesEntryById = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -2000,10 +2057,15 @@ exports.getSalesEntryById = async (req, res) => {
       .populate({ path: "party", select: "name" })
       .populate({ path: "products.product", select: "name unitType" })
       .populate({ path: "services.service", select: "serviceName" })
-      .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      })
       .populate({ path: "company", select: "businessName" });
 
-    if (!entry) return res.status(404).json({ message: "Sales entry not found" });
+    if (!entry)
+      return res.status(404).json({ message: "Sales entry not found" });
 
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Unauthorized" });
@@ -2025,35 +2087,43 @@ exports.sendCreditReminder = async (req, res) => {
       pendingAmount,
       emailSubject,
       emailContent,
-      isHtml = false
+      isHtml = false,
     } = req.body;
 
     // Get transaction details with populated data
     const transaction = await SalesEntry.findById(transactionId)
-      .populate('party', 'name email contactNumber')
-      .populate('company', 'businessName emailId owner')
-      .populate('client');
+      .populate("party", "name email contactNumber")
+      .populate("company", "businessName emailId owner")
+      .populate("client");
 
     if (!transaction) {
-      return res.status(404).json({ message: 'Transaction not found' });
+      return res.status(404).json({ message: "Transaction not found" });
     }
 
     // Get party details
     const party = await Party.findById(partyId);
     if (!party) {
-      return res.status(404).json({ message: 'Party not found' });
+      return res.status(404).json({ message: "Party not found" });
     }
 
     // Check if party has email
     if (!party.email) {
       return res.status(400).json({
-        message: 'Customer does not have an email address'
+        message: "Customer does not have an email address",
       });
     }
 
     // Use custom content if provided, otherwise generate default
-    const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
-    const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
+    const subject =
+      emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
+    const content =
+      emailContent ||
+      generateDefaultEmailContent(
+        transaction,
+        party,
+        daysOverdue,
+        pendingAmount,
+      );
 
     // Determine the client ID for sending email
     let senderClientId = null;
@@ -2061,22 +2131,23 @@ exports.sendCreditReminder = async (req, res) => {
     // 1. Try to get from company owner
     if (transaction.company?.owner) {
       senderClientId = transaction.company.owner;
-      console.log('🔧 Using company owner as sender client:', senderClientId);
+      console.log("🔧 Using company owner as sender client:", senderClientId);
     }
     // 2. Fallback to authenticated client
     else if (req.auth?.clientId) {
       senderClientId = req.auth.clientId;
-      console.log('🔧 Using authenticated client as sender:', senderClientId);
+      console.log("🔧 Using authenticated client as sender:", senderClientId);
     }
     // 3. Fallback to transaction client
     else if (transaction.client) {
       senderClientId = transaction.client._id || transaction.client;
-      console.log('🔧 Using transaction client as sender:', senderClientId);
+      console.log("🔧 Using transaction client as sender:", senderClientId);
     }
 
     if (!senderClientId) {
       return res.status(400).json({
-        message: 'Unable to determine sender. Please connect Gmail integration.'
+        message:
+          "Unable to determine sender. Please connect Gmail integration.",
       });
     }
 
@@ -2085,7 +2156,8 @@ exports.sendCreditReminder = async (req, res) => {
       to: party.email,
       customerName: party.name,
       companyName: transaction.company.businessName,
-      invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
+      invoiceNumber:
+        transaction.invoiceNumber || transaction.referenceNumber || "N/A",
       invoiceDate: transaction.date,
       daysOverdue: daysOverdue,
       pendingAmount: pendingAmount,
@@ -2094,7 +2166,7 @@ exports.sendCreditReminder = async (req, res) => {
       clientId: senderClientId, // Pass determined client ID
       customSubject: subject,
       customContent: content,
-      isHtml: isHtml
+      isHtml: isHtml,
     });
 
     // Create notification for the reminder
@@ -2109,43 +2181,54 @@ exports.sendCreditReminder = async (req, res) => {
     // );
 
     res.json({
-      message: 'Credit reminder sent successfully',
+      message: "Credit reminder sent successfully",
       sentTo: party.email,
       customerName: party.name,
       amount: pendingAmount,
-      sentFrom: 'Client Gmail' // Indicate it was sent from client's email
+      sentFrom: "Client Gmail", // Indicate it was sent from client's email
     });
 
-    console.log(`✅ Credit reminder sent from client Gmail to ${party.email} for ${party.name}`);
-
+    console.log(
+      `✅ Credit reminder sent from client Gmail to ${party.email} for ${party.name}`,
+    );
   } catch (error) {
-    console.error('Error in sendCreditReminder:', error);
+    console.error("Error in sendCreditReminder:", error);
 
     // Handle specific Gmail connection errors
-    if (error.message.includes('Gmail is not connected') ||
-      error.message.includes('No client Gmail available') ||
-      error.message.includes('Gmail access was revoked')) {
+    if (
+      error.message.includes("Gmail is not connected") ||
+      error.message.includes("No client Gmail available") ||
+      error.message.includes("Gmail access was revoked")
+    ) {
       return res.status(400).json({
-        message: 'Gmail not connected. Please connect your Gmail account in settings to send emails.',
-        error: error.message
+        message:
+          "Gmail not connected. Please connect your Gmail account in settings to send emails.",
+        error: error.message,
       });
     }
 
     res.status(500).json({
-      message: 'Failed to send credit reminder',
-      error: error.message
+      message: "Failed to send credit reminder",
+      error: error.message,
     });
   }
 };
 
-function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
-  const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
+function generateDefaultEmailContent(
+  transaction,
+  party,
+  daysOverdue,
+  pendingAmount,
+) {
+  const invoiceNumber =
+    transaction.invoiceNumber || transaction.referenceNumber || "N/A";
   const invoiceDate = new Date(transaction.date).toLocaleDateString();
-  const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
+  const formattedAmount = new Intl.NumberFormat("en-IN").format(pendingAmount);
 
-  const overdueNotice = daysOverdue > 30
-    ? `<p style="color: #d32f2f; font-weight: bold;">This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.</p>`
-    : '<p>Please process this payment at your earliest convenience.</p>';
+  const overdueNotice =
+    daysOverdue > 30
+      ? `<p style="color: #d32f2f; font-weight: bold;">This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.</p>`
+      : "<p>Please process this payment at your earliest convenience.</p>";
 
   return `
 <!DOCTYPE html>
@@ -2225,7 +2308,7 @@ function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmo
     <div class="footer">
       <p><strong>Best regards,</strong><br>
       ${transaction.company.businessName}<br>
-      ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}</p>
+      ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ""}</p>
     </div>
   </div>
 </body>a
