@@ -539,7 +539,7 @@ exports.loginUser = async (req, res) => {
         createdByClient: user.createdByClient,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "8h" },
+      { expiresIn: "30d" },
     );
 
     res.json({

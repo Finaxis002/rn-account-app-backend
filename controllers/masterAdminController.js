@@ -88,7 +88,7 @@ exports.loginMasterAdmin = async (req, res) => {
     const token = jwt.sign(
       { id: admin._id, role: "master" },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" },
+      { expiresIn: "30d" },
     );
 
     res.status(200).json({

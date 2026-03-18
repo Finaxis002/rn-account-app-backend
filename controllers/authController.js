@@ -26,7 +26,7 @@ const DEV_HARDCODE_OTP = true;
 const DEV_USERS = {
   "master01@gmail.com": {
     otp: "111111",
-    accountType: "client",
+    accountType: "master",
     role: "master",
     user: {
       id: "dev-master",
