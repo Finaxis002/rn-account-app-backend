@@ -26,8 +26,16 @@ const USER_OVERRIDE_KEYS = new Set([
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canCreateProformaEntries",
   "canShowCustomers",
   "canShowVendors",
+  // ── Show transaction permissions (user sees only their own entries) ──
+  "canShowSaleEntries",
+  "canShowPurchaseEntries",
+  "canShowJournalEntries",
+  "canShowReceiptEntries",
+  "canShowPaymentEntries",
+  "canShowProformaEntries", 
 ]);
 
 function pickOverrideFlags(body) {
@@ -66,12 +74,11 @@ router.use(
 );
 
 /** ✔️ NEW: current user's EFFECTIVE permissions (caps + limits) */
-router.get("/me/effective",verifyUser, async (req, res) => {
+router.get("/me/effective", verifyUser, async (req, res) => {
   try {
     const clientId = req.auth.clientId;
     const userId = req.auth.id;
     const eff = await getEffectivePermissions({ clientId, userId });
-    // Return just what the FE needs to gate UI (flatten caps+limits):
     return res.json({ ...eff.caps, ...eff.limits });
   } catch (e) {
     return res.status(500).json({ message: e.message });
@@ -92,7 +99,7 @@ router.get("/me", async (req, res) => {
 });
 
 /** GET: read overrides for a user (raw overrides, not effective) */
-router.get("/:userId",verifyClientOrAdmin, async (req, res) => {
+router.get("/:userId", verifyClientOrAdmin, async (req, res) => {
   try {
     const clientId = req.user.createdByClient || req.user.id;
     const { userId } = req.params;
@@ -141,7 +148,7 @@ router.post("/", async (req, res) => {
       user,
       ...(Array.isArray(allowedCompanies) ? { allowedCompanies } : {}),
       ...pickOverrideFlags(flags),
-      updatedBy: req.auth.id, // 🔧 use req.auth.id
+      updatedBy: req.auth.id,
     };
 
     const doc = await UserPermission.create(update);
@@ -155,7 +162,7 @@ router.post("/", async (req, res) => {
 });
 
 /** PATCH: update overrides for a user (partial) */
-router.patch("/:userId",verifyClientOrAdmin, async (req, res) => {
+router.patch("/:userId", verifyClientOrAdmin, async (req, res) => {
   try {
     const clientId = req.user.createdByClient || req.user.id;
     const { userId } = req.params;
@@ -165,7 +172,7 @@ router.patch("/:userId",verifyClientOrAdmin, async (req, res) => {
     }
 
     const set = pickOverrideFlags(req.body);
-    const update = { ...set, updatedBy: req.auth.id }; // 🔧
+    const update = { ...set, updatedBy: req.auth.id };
 
     if (req.body.allowedCompanies) {
       if (!(await validateCompanyScope(clientId, req.body.allowedCompanies))) {
@@ -182,17 +189,16 @@ router.patch("/:userId",verifyClientOrAdmin, async (req, res) => {
 
     if (!doc) return res.status(404).json({ message: "Not found" });
 
-    // Broadcast the updated user permissions to the specific user and their client
     console.log(`Broadcasting user permission update to user ${userId}`);
-    broadcastToUser(userId, { type: 'USER_PERMISSION_UPDATE', data: doc });
-    
-    console.log(`Broadcasting user permission update to client ${clientId}`);
-    broadcastToClient(clientId, { type: 'USER_PERMISSION_UPDATE', data: doc });
+    broadcastToUser(userId, { type: "USER_PERMISSION_UPDATE", data: doc });
 
-    console.log('User permission update completed successfully:', {
+    console.log(`Broadcasting user permission update to client ${clientId}`);
+    broadcastToClient(clientId, { type: "USER_PERMISSION_UPDATE", data: doc });
+
+    console.log("User permission update completed successfully:", {
       userId,
       clientId,
-      updates: update
+      updates: update,
     });
 
     res.json(doc);

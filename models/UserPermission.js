@@ -4,34 +4,54 @@ const mongoose = require("mongoose");
 const userPermissionSchema = new mongoose.Schema(
   {
     // multi-tenant context
-    client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true, index: true },
+    client: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      required: true,
+      index: true,
+    },
 
     // the user these overrides apply to
-    user:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
 
     // --- capability flags (null = inherit from client Permission) ---
-    canCreateInventory:       { type: Boolean, default: false },
-    canCreateCustomers:       { type: Boolean, default: false },
-    canCreateVendors:         { type: Boolean, default: false },
-    canCreateCompanies:       { type: Boolean, default: false },
-    canUpdateCompanies:       { type: Boolean, default: false },
-    canSendInvoiceEmail:      { type: Boolean, default: false },
-    canSendInvoiceWhatsapp:   { type: Boolean, default: false },
-    canCreateSaleEntries:     { type: Boolean, default: false },
+    canCreateInventory: { type: Boolean, default: false },
+    canCreateCustomers: { type: Boolean, default: false },
+    canCreateVendors: { type: Boolean, default: false },
+    canCreateCompanies: { type: Boolean, default: false },
+    canUpdateCompanies: { type: Boolean, default: false },
+    canSendInvoiceEmail: { type: Boolean, default: false },
+    canSendInvoiceWhatsapp: { type: Boolean, default: false },
+    canCreateSaleEntries: { type: Boolean, default: false },
     canCreatePurchaseEntries: { type: Boolean, default: false },
-    canCreateJournalEntries:  { type: Boolean, default: false },
-    canCreateReceiptEntries:  { type: Boolean, default: false },
-    canCreatePaymentEntries:  { type: Boolean, default: false },
-    canShowCustomers:         { type: Boolean, default: false }, // New field for showing customers in the sales section
-    canShowVendors:           { type: Boolean, default: false }, 
+    canCreateJournalEntries: { type: Boolean, default: false },
+    canCreateReceiptEntries: { type: Boolean, default: false },
+    canCreatePaymentEntries: { type: Boolean, default: false },
+    canCreateProformaEntries: { type: Boolean, default: false }, // ← NEW
+    canShowCustomers: { type: Boolean, default: false },
+    canShowVendors: { type: Boolean, default: false },
+
+    canShowSaleEntries: { type: Boolean, default: false },
+    canShowPurchaseEntries: { type: Boolean, default: false },
+    canShowJournalEntries: { type: Boolean, default: false },
+    canShowReceiptEntries: { type: Boolean, default: false },
+    canShowPaymentEntries: { type: Boolean, default: false },
+    canShowProformaEntries: { type: Boolean, default: false },   // ← NEW
 
     // optional scoping
-    allowedCompanies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Company" }],
+    allowedCompanies: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
+    ],
 
     // audit
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
-  { timestamps: true, optimisticConcurrency: true }
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 // Ensure one doc per (client,user)

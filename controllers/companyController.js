@@ -7,8 +7,7 @@ const Permission = require("../models/Permission");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const StockCarryForwardService = require("../services/stockCarryForwardService");
-
-
+const { sendCompanyRegistrationEmail } = require('../utils/emailService');
 
 // Helper to convert absolute file path to a public URL under /uploads
 const toPublicUrl = (absPath) => {
@@ -30,6 +29,7 @@ exports.createCompany = async (req, res) => {
       registrationNumber,
       businessName,
       businessType,
+      industryType,
       address,
       City,
       addressState,
@@ -57,6 +57,7 @@ exports.createCompany = async (req, res) => {
       TDSLoginPassword,
       selectedClient,
       logo,
+       brandColor,
     } = req.body;
 
     // Validate selectedClient if provided
@@ -106,6 +107,7 @@ exports.createCompany = async (req, res) => {
       registrationNumber,
       businessName,
       businessType,
+      industryType: industryType || "general",
       address,
       City,
       addressState,
@@ -134,6 +136,7 @@ exports.createCompany = async (req, res) => {
       client: assignedClientId,
       selectedClient: assignedClientId,
       logo: logoUrl,
+      brandColor: brandColor || "#006EC8",
     });
 
     await company.save();
@@ -142,6 +145,22 @@ exports.createCompany = async (req, res) => {
 //     clientId: assignedClientId, // or req.user.id in createCompanyByClient
 //     date: new Date() // today
 // });
+
+// Send registration email if emailId is provided
+    if (emailId) {
+      try {
+        await sendCompanyRegistrationEmail({
+          to: emailId,
+          companyName: businessName,
+          businessType: businessType,
+          registrationNumber: registrationNumber,
+        });
+        console.log(`Registration email sent to ${emailId} for company ${businessName}`);
+      } catch (emailError) {
+        // Log email error but don't fail the company creation
+        console.error('Failed to send registration email:', emailError);
+      }
+    }
     
     // Emit company update event via socket
     if (global.io) {
@@ -176,6 +195,7 @@ exports.createCompanyByClient = async (req, res) => {
       registrationNumber,
       businessName,
       businessType,
+      industryType,
       address,
       City,
       addressState,
@@ -202,6 +222,7 @@ exports.createCompanyByClient = async (req, res) => {
       TDSLoginUsername,
       TDSLoginPassword,
       logo,
+     brandColor,
     } = req.body;
 
     // Check effective permissions for the user
@@ -243,6 +264,7 @@ exports.createCompanyByClient = async (req, res) => {
       registrationNumber,
       businessName,
       businessType,
+      industryType: industryType || "general",
       address,
       City,
       addressState,
@@ -271,17 +293,27 @@ exports.createCompanyByClient = async (req, res) => {
       client: req.user.id,
       selectedClient: req.user.id,
       logo: logoUrl,
+      brandColor: brandColor || "#006EC8",
     });
 
-    await company.save();
-//     await StockCarryForwardService.createInitialDailyLedger({
-//     companyId: company._id,
-//     clientId: req.user.id,
-//     date: new Date()
-// });
+    
 
-    // Invalidate cache
-    // invalidateClient(req.user.id);
+    await company.save();
+
+    if (emailId) {
+      try {
+        await sendCompanyRegistrationEmail({
+          to: emailId,
+          companyName: businessName,
+          businessType: businessType,
+          registrationNumber: registrationNumber,
+        });
+        console.log(`Registration email sent to ${emailId} for company ${businessName}`);
+      } catch (emailError) {
+        // Log email error but don't fail the company creation
+        console.error('Failed to send registration email:', emailError);
+      }
+    }
     
     // Emit company update event via socket
     if (global.io) {
@@ -348,6 +380,7 @@ exports.updateCompany = async (req, res) => {
       registrationNumber,
       businessName,
       businessType,
+      industryType,
       address,
       City,
       addressState,
@@ -375,6 +408,7 @@ exports.updateCompany = async (req, res) => {
       TDSLoginPassword,
       selectedClient,
       logo,
+      brandColor,
     } = req.body;
 
     const company = await Company.findById(companyId);
@@ -394,6 +428,9 @@ exports.updateCompany = async (req, res) => {
     company.registrationNumber = registrationNumber || company.registrationNumber;
     company.businessName = businessName || company.businessName;
     company.businessType = businessType || company.businessType;
+    if (industryType) {
+      company.industryType = industryType;
+    }
     company.address = address || company.address;
     company.City = City || company.City;
     company.addressState = addressState || company.addressState;
@@ -423,7 +460,9 @@ exports.updateCompany = async (req, res) => {
     company.DeductorType = DeductorType || company.DeductorType;
     company.TDSLoginUsername = TDSLoginUsername || company.TDSLoginUsername;
     company.TDSLoginPassword = TDSLoginPassword || company.TDSLoginPassword;
-
+if (brandColor) {
+  company.brandColor = brandColor;
+}
     // Logo update logic
     if (req.file && req.file.path) {
       // New file uploaded → optionally delete previous local file (if it was local)

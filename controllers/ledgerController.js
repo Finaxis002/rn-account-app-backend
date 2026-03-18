@@ -3,7 +3,7 @@ const PurchaseEntry = require("../models/PurchaseEntry");
 const PaymentEntry = require("../models/PaymentEntry");
 const Vendor = require("../models/Vendor");
 const PaymentExpense = require("../models/PaymentExpense");
-
+const mongoose = require("mongoose");
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 function userIsPriv(req) {
@@ -292,23 +292,24 @@ exports.getAllExpenseTotals = async (req, res) => {
     const clientId = req.auth.clientId;
     const { fromDate, toDate, companyId } = req.query;
 
-    const companyFilter = companyId ? { company: companyId } : {};
-    const dateFilter = {};
+
+    const match = {
+      client: new mongoose.Types.ObjectId(clientId),
+      isExpense: true
+    };
+
+    if (companyId) {
+      match.company = new mongoose.Types.ObjectId(companyId);
+    }
+
     if (fromDate || toDate) {
-      dateFilter.date = {};
-      if (fromDate) dateFilter.date.$gte = new Date(fromDate);
-      if (toDate) dateFilter.date.$lte = new Date(toDate);
+      match.date = {};
+      if (fromDate) match.date.$gte = new Date(fromDate);
+      if (toDate) match.date.$lte = new Date(toDate);
     }
 
     const totals = await PaymentEntry.aggregate([
-      {
-        $match: {
-          client: clientId,
-          isExpense: true,
-          ...companyFilter,
-          ...(dateFilter.date ? { date: dateFilter.date } : {})
-        }
-      },
+      { $match: match },
       {
         $group: {
           _id: "$expense", 
@@ -318,7 +319,9 @@ exports.getAllExpenseTotals = async (req, res) => {
     ]);
     const response = {};
     totals.forEach(item => {
-      response[item._id] = item.totalAmount;
+      if (item._id) {
+        response[item._id.toString()] = item.totalAmount;
+      }
     });
 
     res.json(response);

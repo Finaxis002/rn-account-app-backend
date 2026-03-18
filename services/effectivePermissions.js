@@ -4,9 +4,8 @@ const UserPermission = require("../models/UserPermission");
 const Company = require("../models/Company");
 
 // All capability keys your UI/back-end care about.
-// (Some exist only on tenant Permission, some also on UserPermission.)
-const CAP_KEYS = [           // tenant-only
-  "canCreateInventory",          // tenant-only
+const CAP_KEYS = [
+  "canCreateInventory",
   "canCreateCustomers",
   "canCreateVendors",
   "canCreateCompanies",
@@ -18,11 +17,19 @@ const CAP_KEYS = [           // tenant-only
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canCreateProformaEntries", 
   "canShowCustomers",
   "canShowVendors",
+  // ── Show transaction permissions (user sees only their own entries) ──
+  "canShowSaleEntries",
+  "canShowPurchaseEntries",
+  "canShowJournalEntries",
+  "canShowReceiptEntries",
+  "canShowPaymentEntries",
+  "canShowProformaEntries",   
 ];
 
-// keys that are allowed to be overridden at the user level
+// Keys that are allowed to be overridden at the user level
 const USER_OVERRIDE_KEYS = new Set([
   "canCreateInventory",
   "canCreateCustomers",
@@ -36,13 +43,21 @@ const USER_OVERRIDE_KEYS = new Set([
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canCreateProformaEntries",
   "canShowCustomers",
   "canShowVendors",
+  // ── Show transaction permissions (user sees only their own entries) ──
+  "canShowSaleEntries",
+  "canShowPurchaseEntries",
+  "canShowJournalEntries",
+  "canShowReceiptEntries",
+  "canShowPaymentEntries",
+  "canShowProformaEntries",   
 ]);
 
 /**
  * Merge order:
- *   base = tenant Permission (booleans)
+ *   base     = tenant Permission (booleans)
  *   override = UserPermission[key] (true|false|null)
  *   effective = base && (override == null ? true : override)
  * I.e., tenant flags are the ceiling: when tenant=false → effective=false.
@@ -63,7 +78,7 @@ async function getEffectivePermissions({ clientId, userId }) {
       caps[key] = false;
       continue;
     }
-    // If tenant base is true
+    // If tenant base is true:
     // null/undefined = inherit; otherwise use explicit override
     caps[key] = (override == null) ? true : !!override;
   }

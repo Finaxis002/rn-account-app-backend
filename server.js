@@ -24,6 +24,7 @@ const paymentExpenseRoutes = require("./routes/paymentExpenseRoutes");
 const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require("./routes/permission.routes");
 const serviceRoutes = require("./routes/serviceRoutes");
+const additionalServiceRoutes = require("./routes/additionalServiceRoutes");
 const {
   loginClient,
   requestClientOtp,
@@ -57,6 +58,8 @@ const {
   testReportImmediately,
 } = require("./services/schedulerService");
 const dailyStockLedgerRoutes = require("./routes/dailyStockLedgerRoutes");
+const transactionRoutes = require("./routes/transactions");
+const ocrRoutes = require("./routes/ocrRoutes");
 
 dotenv.config();
 connectDB();
@@ -163,6 +166,7 @@ app.use("/api/payment-expenses", paymentExpenseRoutes);
 app.use("/api/journals", journalRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/services", serviceRoutes);
+app.use("/api/additional-services", additionalServiceRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
@@ -197,6 +201,8 @@ app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/ledger", ledgerRoutes);
 app.use("/api/profitloss", profitLossRoutes);
 app.use("/api/daily-stock-ledger", dailyStockLedgerRoutes);
+app.use("/api/transactions", transactionRoutes);
+app.use("/api/ocr", ocrRoutes);
 
 app.get("/", (req, res) => {
   res.send("Account App CI/CD is working on New server(VPS server) ......");

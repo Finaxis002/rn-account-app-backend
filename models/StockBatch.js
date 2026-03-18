@@ -42,7 +42,7 @@ const stockBatchSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'sold', 'cancelled'],
+    enum: ['active', 'sold', 'cancelled', 'consumed'],
     default: 'active'
   },
   isActive: {

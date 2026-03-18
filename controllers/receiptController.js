@@ -139,11 +139,11 @@ async function notifyAdminOnReceiptAction({ req, action, customerName, entryId, 
 
 
 function companyAllowedForUser(req, companyId) {
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
 exports.createReceipt = async (req, res) => {
@@ -444,21 +444,39 @@ exports.createReceipt = async (req, res) => {
 //   }
 // };
 
+// controllers/receiptController.js
 exports.getReceipts = async (req, res) => {
   try {
     await ensureAuthCaps(req);
     
     const filter = {};
-   const user = req.auth;
+    const user = req.auth;
+    const { role, allowedCompanies, caps, userId } = req.auth;
 
-    console.log("User role:", user.role);
-    console.log("User ID:", user.id);
-    console.log("Query companyId:", req.query.companyId);
+    // console.log("🔍 RECEIPT - User role:", role);
+    // console.log("🔍 RECEIPT - User ID:", userId);
+    // console.log("🔍 RECEIPT - Query companyId:", req.query.companyId);
+    // console.log("🔍 RECEIPT - Full caps object:", JSON.stringify(caps, null, 2));
+    // console.log("🔍 RECEIPT - canShowReceiptEntries value:", caps?.canShowReceiptEntries);
 
-   filter.client = req.auth.clientId;
+   
+    if (role === "user") {
+      const canShowAllReceipts = caps?.canShowReceiptEntries === true;
+      
+      console.log("🔍 RECEIPT - canShowAllReceipts result:", canShowAllReceipts);
+      
+      if (!canShowAllReceipts) {
+        // console.log("🔍 RECEIPT - User can only see their own entries. Adding filter:", userId);
+        filter.createdByUser = userId;
+      } else {
+        console.log("🔍 RECEIPT - User can see ALL receipt entries - no filter added");
+      }
+    }
+
+    filter.client = req.auth.clientId;
 
     // --- Company filtering ---
-    if (req.query.companyId) {
+    if (req.query.companyId && req.query.companyId !== "all" && req.query.companyId !== "undefined") {
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({ 
           success: false, 
@@ -466,13 +484,10 @@ exports.getReceipts = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-
     } else {
-      
       const allowedCompanies = user.allowedCompanies || [];
 
       if (user.role !== "client" && user.role !== "master") {
-        
         if (allowedCompanies.length > 0) {
           filter.company = { $in: allowedCompanies };
         } else {
@@ -514,7 +529,7 @@ exports.getReceipts = async (req, res) => {
       ];
     }
 
-  console.log("Final filter for receipt entries:", JSON.stringify(filter, null, 2));
+    // console.log("🔍 RECEIPT - Final filter:", JSON.stringify(filter, null, 2));
 
     // --- ENHANCED PAGINATION ---
     const page = parseInt(req.query.page) || 1;
@@ -558,7 +573,7 @@ exports.getReceipts = async (req, res) => {
 
     // Build query with proper population
     const query = ReceiptEntry.find(filter)
-      .sort({ date: -1, createdAt: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .populate({ 
         path: "party", 
         select: "name email phoneNumber address" 
@@ -587,6 +602,7 @@ exports.getReceipts = async (req, res) => {
       // Apply pagination
       data = await query.skip(skip).limit(effectiveLimit).lean();
     }
+    // console.log(`🔍 RECEIPT - Found ${data.length} entries out of ${total} total`);
 
     // Add transaction type for frontend
     const typedData = data.map(entry => ({ 
@@ -977,7 +993,7 @@ exports.getReceiptsByClient = async (req, res) => {
 
     // Build query
     let query = ReceiptEntry.find(filter)
-      .sort({ date: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .populate({ path: "party", select: "name" })
       .populate({ path: "company", select: "businessName" });
 

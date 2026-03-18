@@ -47,6 +47,24 @@ const verifyClientOrAdmin = async (req, res, next) => {
     let finalUserId = userId;
     let finalClientId = clientId;
 
+    // Allow master to scope requests to a client tenant explicitly.
+    // This is used by admin analytics import/export flows.
+    const requestedClientIdRaw =
+      req?.query?.clientId ??
+      req?.body?.clientId ??
+      req?.params?.clientId;
+    const requestedClientId =
+      requestedClientIdRaw != null
+        ? String(requestedClientIdRaw).trim()
+        : "";
+    if (
+      role === "master" &&
+      requestedClientId &&
+      requestedClientId.toLowerCase() !== "all"
+    ) {
+      finalClientId = requestedClientId;
+    }
+
     if (!finalUserId && role !== "master") {
       // Try to find user by email or other identifier if available
       const User = require("../models/User");

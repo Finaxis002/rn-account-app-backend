@@ -106,12 +106,11 @@ async function notifyAdminOnPaymentAction({ req, action, vendorName, entryId, co
 
 
 function companyAllowedForUser(req, companyId) {
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  // If allowed is empty -> no explicit restriction
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
 /** CREATE */
@@ -369,12 +368,27 @@ exports.getPayments = async (req, res) => {
 
     const filter = {};
     const user = req.user || req.auth;
-    const { role, allowedCompanies, clientId: authClientId } = req.auth;
+    const { role, allowedCompanies, clientId: authClientId, caps, userId } = req.auth;
 
-    console.log("User role:", role);
-    console.log("Query companyId:", req.query.companyId);
+    // console.log("🔍 PAYMENT - User role:", role);
+    // console.log("🔍 PAYMENT - User ID:", userId);
+    // console.log("🔍 PAYMENT - Query companyId:", req.query.companyId);
+    // console.log("🔍 PAYMENT - Full caps object:", JSON.stringify(caps, null, 2));
+    // console.log("🔍 PAYMENT - canShowPaymentEntries value:", caps?.canShowPaymentEntries);
 
-    // --- Client filtering ---
+    if (role === "user") {
+      const canShowAllPayments = caps?.canShowPaymentEntries === true;
+      
+      console.log("🔍 PAYMENT - canShowAllPayments result:", canShowAllPayments);
+      
+      if (!canShowAllPayments) {
+        // console.log("🔍 PAYMENT - User can only see their own entries. Adding filter:", userId);
+        filter.createdByUser = userId;
+      } else {
+        console.log("🔍 PAYMENT - User can see ALL payment entries - no filter added");
+      }
+    }
+
     if (role === "client") {
       filter.client = user.id;
     } else {
@@ -390,9 +404,8 @@ exports.getPayments = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-} else {
-     if (role === "user" || role === "admin") {
-        
+    } else {
+      if (role === "user" || role === "admin") {
         if (allowedCompanies && allowedCompanies.length > 0) {
           filter.company = { $in: allowedCompanies.map(String) };
         } else {
@@ -409,6 +422,7 @@ exports.getPayments = async (req, res) => {
         }
       }
     }
+    // --- Date range filtering ---
     const { startDate, endDate, dateFrom, dateTo } = req.query;
     const finalStart = startDate || dateFrom;
     const finalEnd = endDate || dateTo;
@@ -433,7 +447,7 @@ exports.getPayments = async (req, res) => {
       ];
     }
 
-    console.log("Final filter for payment entries:", JSON.stringify(filter, null, 2));
+    // console.log("🔍 PAYMENT - Final filter:", JSON.stringify(filter, null, 2));
 
     // --- ENHANCED PAGINATION ---
     const page = parseInt(req.query.page) || 1;
@@ -452,7 +466,7 @@ exports.getPayments = async (req, res) => {
     const totalPages = Math.ceil(total / effectiveLimit) || 1;
 
     const query = PaymentEntry.find(filter)
-      .sort({ date: -1, createdAt: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .populate({ 
         path: "vendor", 
         select: "vendorName contactPerson phoneNumber email address" 
@@ -474,6 +488,7 @@ exports.getPayments = async (req, res) => {
       data = await query.skip(skip).limit(effectiveLimit).lean();
     }
 
+    console.log(`🔍 PAYMENT - Found ${data.length} entries out of ${total} total`);
 
     const typedData = data.map(entry => ({ 
       ...entry, 
@@ -502,7 +517,6 @@ exports.getPayments = async (req, res) => {
     });
   }
 };
-
 
 /** ADMIN / MASTER: list by client (optional company + pagination) */
 // exports.getPaymentsByClient = async (req, res) => {
@@ -608,7 +622,7 @@ exports.getPaymentsByClient = async (req, res) => {
 
     // Build query (same as original)
     const query = PaymentEntry.find(where)
-      .sort({ date: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "expense", select: "name" })
       .populate({ path: "company", select: "businessName" });

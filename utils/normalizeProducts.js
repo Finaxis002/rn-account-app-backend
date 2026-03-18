@@ -93,6 +93,8 @@ module.exports = async (rawProducts = [], clientId, userId) => {
       unitType,
       otherUnit, // ✅ This was missing - now included
       amount,
+     discountType: item.discountType || "fixed", 
+    discountValue: Number(item.discountValue) || 0,
       gstPercentage,
       lineTax,
       lineTotal,

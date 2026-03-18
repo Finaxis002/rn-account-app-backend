@@ -7,6 +7,7 @@ const companySchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  industryType: { type: String, default: "general" },
   address: { type: String },
   City: { type: String },
   addressState: { type: String },
@@ -32,7 +33,7 @@ const companySchema = new mongoose.Schema({
   DeductorType: { type: String, default: null },
   TDSLoginUsername: { type: String, default: null },
   TDSLoginPassword: { type: String, default: null },
-
+brandColor: { type: String, default: "#006EC8" },
 
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
   // NEW: Assigned client

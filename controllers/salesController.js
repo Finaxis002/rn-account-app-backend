@@ -1,7 +1,4 @@
 
-
-
-
 // controllers/salesController.js
 const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
@@ -13,16 +10,15 @@ const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
-// at top of controllers/salesController.js
+// at top of controllers/salesController.js..
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { sendCreditReminderEmail } = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
-
 const Product = require("../models/Product");
 const StockBatch = require("../models/StockBatch");
 const DailyStockLedger = require("../models/DailyStockLedger");
-
+const additionalServiceSchema = require("../models/AdditionalService");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -79,11 +75,11 @@ function userIsPriv(req) {
 }
 
 function companyAllowedForUser(req, companyId) {
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
 
@@ -592,18 +588,78 @@ async function reverseDailyStockLedgerForSales(
 // };
 
 
+exports.getSalesEntriesByClient = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
+    // Fetch data from database if not cached
+    const entries = await SalesEntry.find({ client: clientId })
+      .populate("party", "name")
+      .populate("products.product", "name")
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      })
+      .populate({
+        path: "additionalServices.service",
+        select: "serviceName",
+        strictPopulate: false,
+      })
+      .populate("company", "businessName")
+      .populate("shippingAddress")
+      .populate("bank")
+      .sort({ date: -1 });
+
+    res.status(200).json({ entries });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch entries", error: err.message });
+  }
+};
+
+
 exports.getSalesEntries = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
     const filter = {};
     const user = req.user;
-    const { clientId, role, allowedCompanies } = req.auth;
+    const { clientId, role, allowedCompanies, caps, userId } = req.auth;
     console.log("User role:", user.role);
     console.log("User ID:", user.id);
     console.log("Query companyId:", req.query.companyId);
 
-    // --- 1. Filter Logic Fix ---
+   
+    if (role === "user") {
+      
+      const canShowAllSales = caps?.canShowSaleEntries === true;
+      
+      console.log("User permissions - canShowAllSales:", canShowAllSales);
+      console.log("User caps:", caps);
+      
+      if (!canShowAllSales) {
+       
+        // console.log("User can only see their own entries. User ID:", userId);
+        filter.createdByUser = userId;
+      } else {
+        console.log("User can see ALL sales entries");
+      }
+      
+    }
+
+    // --- Company Filter Logic ---
     if (req.query.companyId && req.query.companyId !== "all") {
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({
@@ -613,7 +669,7 @@ exports.getSalesEntries = async (req, res) => {
       }
       filter.company = req.query.companyId;
     } else {
-if (role === "admin" || role === "user") {
+      if (role === "admin" || role === "user") {
         if (allowedCompanies && allowedCompanies.length > 0) {
           filter.company = { $in: allowedCompanies.map(String) };
         } else {
@@ -630,7 +686,7 @@ if (role === "admin" || role === "user") {
       filter.client = req.auth.clientId;
     }
 
-    // Date filters handle karna (Agar dashboard page par specific date select ho)
+    // Date filters
     const { startDate, endDate } = req.query;
     if (startDate || endDate) {
       filter.date = {};
@@ -638,16 +694,15 @@ if (role === "admin" || role === "user") {
       if (endDate) filter.date.$lte = new Date(`${endDate}T23:59:59`);
     }
 
-    // --- 2. Dashboard Logic Fix (Sum accurate karne ke liye) ---
+    // --- Dashboard Logic (no pagination) ---
     const isDashboard = req.query.isDashboard === 'true';
 
     if (isDashboard) {
-      // Dashboard ke liye bina limit ke data fetch karein
       const entries = await SalesEntry.find(filter)
         .populate("party", "name")
         .populate("products.product", "name productName") 
-        .populate("party", "name").sort({ date: -1 })
-        .sort({ date: -1 });
+        .populate("party", "name")
+        .sort({ date: -1, createdAt: -1, _id: -1 });
 
       return res.status(200).json({
         success: true,
@@ -656,7 +711,7 @@ if (role === "admin" || role === "user") {
       });
     }
 
-    // --- 3. Normal Pagination Logic ---
+    // --- Normal Pagination Logic ---
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
@@ -675,12 +730,19 @@ if (role === "admin" || role === "user") {
         select: "serviceName",
         strictPopulate: false,
       })
+      .populate({
+        path: "additionalServices.service",
+        select: "serviceName",
+        strictPopulate: false,
+      })
+      .populate("additionalServices.service", "serviceName")
       .populate("company", "businessName")
       .populate("shippingAddress")
       .populate("bank")
-      .sort({ date: -1 });
+      .sort({ date: -1, createdAt: -1, _id: -1 });
 
     const totalPages = Math.ceil(totalCount / limit);
+    // console.log(`Found ${entries.length} entries. Filter used:`, JSON.stringify(filter));
 
     return res.status(200).json({
       success: true,
@@ -703,8 +765,8 @@ if (role === "admin" || role === "user") {
     });
   }
 };
-
-
+ // 
+ 
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
@@ -733,10 +795,11 @@ exports.getSalesEntriesByClient = async (req, res) => {
         select: "serviceName",
         strictPopulate: false,
       })
+      .populate("additionalServices.service", "serviceName")
       .populate("company", "businessName")
       .populate("shippingAddress")
       .populate("bank")
-      .sort({ date: -1 });
+      .sort({ date: -1, createdAt: -1, _id: -1 });
 
     // Cache the fetched data in Redis for future requests
     // await setToCache(cacheKey, entries);
@@ -753,7 +816,7 @@ exports.getSalesEntriesByClient = async (req, res) => {
 
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
-  let entry, companyDoc, partyDoc, selectedBank;
+  let entry, companyDoc, partyDoc;
 
   try {
     // Ensure the user has permission
@@ -765,14 +828,7 @@ exports.createSalesEntry = async (req, res) => {
     }
 
     // Destructure the request body
-    const {
-      company: companyId,
-      paymentMethod,
-      party,
-      totalAmount,
-      bank,
-      shippingAddress,
-    } = req.body;
+    const { company: companyId, paymentMethod, party } = req.body;
 
     // Normalize paymentMethod to handle empty strings
     const normalizedPaymentMethod = paymentMethod || undefined;
@@ -781,23 +837,11 @@ exports.createSalesEntry = async (req, res) => {
       return res.status(400).json({ message: "Customer ID is required" });
     }
 
-    if (normalizedPaymentMethod === "Credit") {
-      partyDoc = await Party.findById(party);
-      if (!partyDoc) {
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      partyDoc.balance += totalAmount;
-      await partyDoc.save();
-    }
-
     if (!companyAllowedForUser(req, companyId)) {
       return res
         .status(403)
         .json({ message: "You are not allowed to use this company" });
     }
-
-    // 🔴 IMPORTANT: remove the pre-transaction save that caused validation
-    // if (paymentMethod === "Credit") { ... partyDoc.save() }  <-- DELETE THIS WHOLE BLOCK
 
     await session.withTransaction(async () => {
       // Handle transaction logic here
@@ -808,6 +852,7 @@ exports.createSalesEntry = async (req, res) => {
         dueDate,
         products,
         services,
+        additionalServices,
         totalAmount,
         description,
         referenceNumber,
@@ -819,6 +864,10 @@ exports.createSalesEntry = async (req, res) => {
         notes,
         shippingAddress,
         bank,
+         advanceReceived,
+  extraDiscount,
+   extraDiscountType,
+  customRemark,
       } = req.body;
 
       companyDoc = await Company.findOne({
@@ -848,7 +897,7 @@ exports.createSalesEntry = async (req, res) => {
         productsTax = computedTax;
       }
 
-      // Normalize services with GST calculations
+      // Normalize services with GST calculations (supports additional services)
       let normalizedServices = [],
         servicesTotal = 0,
         servicesTax = 0;
@@ -857,10 +906,65 @@ exports.createSalesEntry = async (req, res) => {
           services,
           req.auth.clientId
         );
-        normalizedServices = items;
+        normalizedServices = items.map((item, i) => ({
+          ...item,
+          isAdditionalService: !!services[i]?.isAdditionalService,
+          serviceModel: services[i]?.isAdditionalService ? "AdditionalService" : "Service",
+          travelDate: services[i]?.travelDate
+            ? new Date(services[i].travelDate)
+            : services[i]?.serviceStartDate
+              ? new Date(services[i].serviceStartDate)
+              : item.travelDate,
+          travelFrom: services[i]?.travelFrom ?? item.travelFrom ?? "",
+          travelTo: services[i]?.travelTo ?? item.travelTo ?? "",
+          vehicleType: services[i]?.vehicleType ?? item.vehicleType ?? "",
+          vehicleNumber: services[i]?.vehicleNumber ?? item.vehicleNumber ?? "",
+          variableUnit:
+            services[i]?.variableUnit ?? item.variableUnit ?? item.unitType ?? "Km",
+          fixedCharges:
+            services[i]?.fixedCharges !== undefined
+              ? Number(services[i].fixedCharges) || 0
+              : Number(item.fixedCharges ?? services[i]?.pricePerUnit ?? 0) ||
+                0,
+          variableQty:
+            services[i]?.variableQty !== undefined
+              ? Number(services[i].variableQty) || 0
+              : Number(item.variableQty ?? 0) || 0,
+          variableRate:
+            services[i]?.variableRate !== undefined
+              ? Number(services[i].variableRate) || 0
+              : Number(item.variableRate ?? 0) || 0,
+          variableCharges:
+            services[i]?.variableCharges !== undefined
+              ? Number(services[i].variableCharges) || 0
+              : item.variableCharges ?? 0,
+          quantity: Number(services[i]?.quantity) || item.quantity || 1,
+          unitType: services[i]?.unitType || item.unitType || "Hours",
+          pricePerUnit:
+            Number(services[i]?.pricePerUnit) ||
+            item.pricePerUnit ||
+            Number(services[i]?.fixedCharges) ||
+            0,
+          serviceStartDate:
+            services[i]?.serviceStartDate || services[i]?.travelDate
+              ? new Date(services[i]?.serviceStartDate || services[i]?.travelDate)
+              : item.serviceStartDate,
+          serviceDueDate: services[i]?.serviceDueDate
+            ? new Date(services[i].serviceDueDate)
+            : item.serviceDueDate,
+        }));
         servicesTotal = computedTotal;
         servicesTax = computedTax;
       }
+
+      const normalizedAdditionalServices = normalizedServices.filter(
+        (s) => s.isAdditionalService,
+      );
+      const normalizedRegularServices = normalizedServices.filter(
+        (s) => !s.isAdditionalService,
+      );
+
+
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
@@ -891,12 +995,22 @@ exports.createSalesEntry = async (req, res) => {
                 company: companyDoc._id,
                 client: req.auth.clientId,
                 date,
-                dueDate,
+              dueDate,
                 products: normalizedProducts,
-                services: normalizedServices,
+                services: normalizedRegularServices,
+                additionalServices: normalizedAdditionalServices.map((s) => ({
+                  service: s.service,
+                  serviceName: s.serviceName,
+                  amount: s.amount,
+                  description: s.description,
+                  serviceStartDate: s.serviceStartDate || s.travelDate || null,
+                  serviceDueDate: s.serviceDueDate || null,
+                })),
                 totalAmount: finalTotal,
                 taxAmount: finalTaxAmount, // NEW: Save total tax amount
                 subTotal: computedSubtotal, // NEW: Save subtotal
+                discountType: req.body.discountType || "fixed",
+                discountValue: Number(req.body.discountValue) || 0,
                 description,
                 referenceNumber,
                 gstPercentage:
@@ -913,6 +1027,18 @@ exports.createSalesEntry = async (req, res) => {
                 notes: notes || "",
                 shippingAddress: shippingAddress,
                 bank: bank,
+                  advanceReceived: Number(advanceReceived) || 0,
+                  extraDiscount: Number(extraDiscount) || 0,   
+      extraDiscountType: extraDiscountType || "fixed",
+netPayable: (() => {
+  const base = finalTotal;
+  const amt = extraDiscountType === "percentage"
+    ? +(base * (Number(extraDiscount) / 100)).toFixed(2)
+    : Number(extraDiscount) || 0;
+  return +(base - amt).toFixed(2);
+})(),
+      customRemark: customRemark || "",
+      // invoiceTotal: finalTotal, // ← invoiceTotal = finalTotal
               },
             ],
             { session }
@@ -922,10 +1048,6 @@ exports.createSalesEntry = async (req, res) => {
 
           if (normalizedProducts && normalizedProducts.length > 0) {
             try {
-              // 🔥 ADD DEBUG: Check stock before consumption
-              const productBefore = await Product.findById(normalizedProducts[0].product).session(session);
-              console.log(`🔍 Stock BEFORE consumption: ${productBefore.stocks} units`);
-
               // Consume stock from batches (FIFO) - get both results and COGS
               // Consume stock and get exact batch-wise impact
               const { consumptionResults, totalCOGS } = await consumeStockForSales(entry, normalizedProducts, session);
@@ -938,11 +1060,6 @@ exports.createSalesEntry = async (req, res) => {
               await updateDailyStockLedgerForSales(entry, normalizedProducts, totalCOGS, session);
 
 
-              // 🔥 ADD DEBUG: Check stock after consumption
-              const productAfter = await Product.findById(normalizedProducts[0].product).session(session);
-              console.log(`🔍 Stock AFTER consumption: ${productAfter.stocks} units`);
-
-
               console.log(`✅ Stock consumed for sales: ${consumptionResults.length} products, Total COGS: ₹${totalCOGS}`);
 
 
@@ -951,9 +1068,7 @@ exports.createSalesEntry = async (req, res) => {
                 if (global.io) {
                   console.log('📡 Emitting transaction-update (create sale)...');
 
-                  // Get customer name for notification
-                  const customerDoc = await Party.findById(entry.party);
-                  const customerName = customerDoc?.name || 'Unknown Customer';
+                  const customerName = partyDoc?.name || 'Unknown Customer';
 
                   const socketPayload = {
                     message: 'New Sale Entry',
@@ -1341,11 +1456,14 @@ exports.updateSalesEntry = async (req, res) => {
     const {
       products,
       services,
+      additionalServices,
       paymentMethod,
       totalAmount,
       party,
       shippingAddress,
       bank,
+      discountType,  
+  discountValue,
       ...otherUpdates
     } = req.body;
 
@@ -1423,12 +1541,75 @@ exports.updateSalesEntry = async (req, res) => {
       }
 
       // Normalize service lines only if provided
-      if (Array.isArray(services)) {
-        const { items: normalizedServices, computedTotal } =
-          await normalizeServices(services, req.auth.clientId);
-        entry.services = normalizedServices;
-        servicesTotal = computedTotal;
-      }
+    // In updateSalesEntry function, find this section:
+if (Array.isArray(services)) {
+  const { items: normalizedServices, computedTotal } =
+    await normalizeServices(services, req.auth.clientId);
+  const expandedServices = normalizedServices.map((item, i) => ({
+    ...item,
+    isAdditionalService: !!services[i]?.isAdditionalService,
+    serviceModel: services[i]?.isAdditionalService ? "AdditionalService" : "Service",
+    travelDate: services[i]?.travelDate
+      ? new Date(services[i].travelDate)
+      : services[i]?.serviceStartDate
+      ? new Date(services[i].serviceStartDate)
+      : item.travelDate,
+    travelFrom: services[i]?.travelFrom ?? item.travelFrom ?? "",
+    travelTo: services[i]?.travelTo ?? item.travelTo ?? "",
+    vehicleType: services[i]?.vehicleType ?? item.vehicleType ?? "",
+    vehicleNumber: services[i]?.vehicleNumber ?? item.vehicleNumber ?? "",
+    variableUnit:
+      services[i]?.variableUnit ?? item.variableUnit ?? item.unitType ?? "Km",
+    fixedCharges:
+      services[i]?.fixedCharges !== undefined
+        ? Number(services[i].fixedCharges) || 0
+        : Number(item.fixedCharges ?? services[i]?.pricePerUnit ?? 0) ||
+          0,
+    variableQty:
+      services[i]?.variableQty !== undefined
+        ? Number(services[i].variableQty) || 0
+        : Number(item.variableQty ?? 0) || 0,
+    variableRate:
+      services[i]?.variableRate !== undefined
+        ? Number(services[i].variableRate) || 0
+        : Number(item.variableRate ?? 0) || 0,
+    variableCharges:
+      services[i]?.variableCharges !== undefined
+        ? Number(services[i].variableCharges) || 0
+        : item.variableCharges ?? 0,
+    quantity: Number(services[i]?.quantity) || item.quantity || 1,
+    unitType: services[i]?.unitType || item.unitType || "Hours",
+    pricePerUnit:
+      Number(services[i]?.pricePerUnit) ||
+      item.pricePerUnit ||
+      Number(services[i]?.fixedCharges) ||
+      0,
+    serviceStartDate:
+      services[i]?.serviceStartDate || services[i]?.travelDate
+        ? new Date(services[i]?.serviceStartDate || services[i]?.travelDate)
+        : item.serviceStartDate,
+    serviceDueDate: services[i]?.serviceDueDate
+      ? new Date(services[i].serviceDueDate)
+      : item.serviceDueDate,
+  }));
+  
+  // Split into regular and additional services
+  entry.services = expandedServices.filter((s) => !s.isAdditionalService);
+  
+  // 🔴 FIX: Include serviceName when mapping additional services
+  entry.additionalServices = expandedServices
+    .filter((s) => s.isAdditionalService)
+    .map((s) => ({
+      service: s.service,
+      serviceName: s.serviceName, // Add this field
+      amount: s.amount,
+      description: s.description,
+      serviceCost: s.serviceCost,
+      serviceStartDate: s.serviceStartDate || s.travelDate || null,
+      serviceDueDate: s.serviceDueDate || null,
+    }));
+  servicesTotal = computedTotal;
+}
 
       // Don't allow changing invoiceNumber/year from payload
       const { invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } =
@@ -1437,6 +1618,8 @@ exports.updateSalesEntry = async (req, res) => {
       if (typeof gstRate === "number") {
         entry.gstPercentage = gstRate;
       }
+      if (discountType) entry.discountType = discountType;   
+if (discountValue !== undefined) entry.discountValue = discountValue; 
       if (notes !== undefined) {
         entry.notes = notes;
       }
@@ -2045,6 +2228,6 @@ function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmo
       ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}</p>
     </div>
   </div>
-</body>
+</body>a
 </html>`;
 }

@@ -26,8 +26,22 @@ module.exports = async (rawServices = [], clientId) => {
       throw new Error(`Service not found or unauthorized: ${serviceId}`);
     }
 
-    const amount = Number(item.amount ?? service.amount ?? 0);
+    const fixedCharges = Number(item.fixedCharges ?? item.pricePerUnit ?? 0) || 0;
+    const variableQty = Number(item.variableQty ?? 0) || 0;
+    const variableUnit = String(item.variableUnit || item.unitType || "Km");
+    const variableRate = Number(item.variableRate ?? 0) || 0;
+    const computedVariableTotal = Number((variableQty * variableRate).toFixed(2));
+    const variableCharges =
+      item.variableCharges !== undefined && item.variableCharges !== null
+        ? Number(item.variableCharges) || 0
+        : computedVariableTotal;
+    const requestedAmount = Number(item.amount ?? service.amount ?? 0);
+    const amount =
+      Number.isFinite(requestedAmount) && requestedAmount > 0
+        ? requestedAmount
+        : Number((fixedCharges + variableCharges).toFixed(2));
     if (isNaN(amount)) throw new Error("Invalid amount");
+    const travelDate = item.travelDate || item.serviceStartDate || undefined;
     // Get GST percentage from the request or use service default
     const gstPercentage = Number(item.gstPercentage ?? service.gstPercentage ?? 18);
 
@@ -39,6 +53,23 @@ module.exports = async (rawServices = [], clientId) => {
       serviceName: service._id,
       amount,
       description: item.description || service.description,
+      quantity: Number(item.quantity) || 1,
+      unitType: item.unitType || "Hours",
+      pricePerUnit: Number(item.pricePerUnit ?? fixedCharges) || 0,
+      discountType: item.discountType || "fixed",
+      discountValue: Number(item.discountValue) || 0,
+      serviceStartDate: travelDate ? new Date(travelDate) : undefined,
+      serviceDueDate: item.serviceDueDate ? new Date(item.serviceDueDate) : undefined,
+      travelDate: travelDate ? new Date(travelDate) : undefined,
+      travelFrom: item.travelFrom || "",
+      travelTo: item.travelTo || "",
+      vehicleType: item.vehicleType || "",
+      vehicleNumber: item.vehicleNumber || "",
+      fixedCharges,
+      variableQty,
+      variableUnit,
+      variableRate,
+      variableCharges,
       gstPercentage, // NEW: Save GST percentage
       lineTax,       // NEW: Save calculated tax
       lineTotal      // NEW: Save line total (amount + tax)

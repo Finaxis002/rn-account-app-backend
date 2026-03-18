@@ -73,11 +73,11 @@ function sameTenant(a, b) {
 
 function companyAllowedForUser(req, companyId) {
   if (!companyId) return true;
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
 
@@ -492,7 +492,7 @@ async function reverseProductStocksForDeletion(purchaseEntry, session = null) {
     const product = await Product.findById(item.product).session(session);
     if (product) {
       // Reduce stock by the purchased quantity
-      product.stocks = Math.max(0, product.stocks - item.quantity);
+      product.stocks = (Number(product.stocks) || 0) - (Number(item.quantity) || 0);
       await product.save({ session });
       console.log(`✅ Reduced stock for ${product.name}: -${item.quantity} units`);
     }
@@ -545,28 +545,40 @@ exports.createPurchaseEntry = async (req, res) => {
             }
           }
 
-          let normalizedProducts = [], productsTotal = 0;
+          let normalizedProducts = [], productsTotal = 0, productsTax = 0;
           if (Array.isArray(products) && products.length > 0) {
             const { items, computedTotal } = await normalizePurchaseProducts(
               products,
               req.auth.clientId,
               req.auth.userId /* pass session if normalize funcs use db */
             );
-            normalizedProducts = items; productsTotal = computedTotal;
+            normalizedProducts = items;
+            productsTotal = computedTotal;
+            productsTax = normalizedProducts.reduce(
+              (sum, item) => sum + (Number(item?.lineTax) || 0),
+              0
+            );
           }
 
-          let normalizedServices = [], servicesTotal = 0;
+          let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
           if (Array.isArray(services) && services.length > 0) {
             const { items, computedTotal } = await normalizePurchaseServices(
               services,
               req.auth.clientId /* pass session if normalize funcs use db */
             );
-            normalizedServices = items; servicesTotal = computedTotal;
+            normalizedServices = items;
+            servicesTotal = computedTotal;
+            servicesTax = normalizedServices.reduce(
+              (sum, item) => sum + (Number(item?.lineTax) || 0),
+              0
+            );
           }
 
+          const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
+          const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
           const finalTotal = (typeof totalAmount === "number")
             ? totalAmount
-            : (productsTotal + servicesTotal);
+            : +(computedSubtotal + computedTaxAmount).toFixed(2);
 
           const docs = await PurchaseEntry.create([{
             vendor: vendorDoc._id,
@@ -802,11 +814,26 @@ exports.getPurchaseEntries = async (req, res) => {
 
     const filter = {};
     const user = req.user;
-    const { role, allowedCompanies } = req.auth;
+    const { role, allowedCompanies, caps, userId } = req.auth;
 
-    // --- 1. FILTER LOGIC (User ke liye "all" handle kiya gaya hai) ---
+    // console.log("🔍 PURCHASE - User role:", role);
+    // console.log("🔍 PURCHASE - User ID:", userId);
+    // console.log("🔍 PURCHASE - Full caps object:", JSON.stringify(caps, null, 2));
+    // console.log("🔍 PURCHASE - canShowPurchaseEntries value:", caps?.canShowPurchaseEntries);
+
+    if (role === "user") {
+      const canShowAllPurchases = caps?.canShowPurchaseEntries === true;
+      
+      if (!canShowAllPurchases) {
+        // console.log("🔍 PURCHASE - User can only see their own entries. Adding filter:", userId);
+        filter.createdByUser = userId;
+      } else {
+        console.log("🔍 PURCHASE - User can see ALL purchase entries - no filter added");
+      }
+    }
+
     if (req.query.companyId && req.query.companyId !== "all" && req.query.companyId !== "undefined") {
-      // Jab koi specific company select ki ho
+      
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({
           success: false,
@@ -815,23 +842,23 @@ exports.getPurchaseEntries = async (req, res) => {
       }
       filter.company = req.query.companyId;
     } else {
-      // "All Companies" ka case
-if (role === "user" || role === "admin") {
+      
+      if (role === "user" || role === "admin") {
         if (allowedCompanies && allowedCompanies.length > 0) {
-          // Sirf wahi data dikhega jo user ko allot kiya gaya hai
-        filter.company = { $in: allowedCompanies };
-      } else {
-        return res.status(200).json({
-          success: true,
-          count: 0,
-          data: [] });
+         
+          filter.company = { $in: allowedCompanies };
+        } else {
+          return res.status(200).json({
+            success: true,
+            count: 0,
+            data: [] 
+          });
+        }
       }
-      }
-      // Master/Admin ke liye filter.company empty rahega (Sara data fetch hoga)
+      
     }
 
-    // Client filtering (Tenant security)
-   if (req.auth.clientId) {
+    if (req.auth.clientId) {
       filter.client = req.auth.clientId;
     }
 
@@ -855,6 +882,7 @@ if (role === "user" || role === "admin") {
         { billNumber: { $regex: searchTerm, $options: "i" } }
       ];
     }
+    // console.log("🔍 PURCHASE - Final filter:", JSON.stringify(filter, null, 2));
 
     // --- 2. DASHBOARD LOGIC (Bypass pagination for sum) ---
     const isDashboard = req.query.isDashboard === 'true';
@@ -862,7 +890,7 @@ if (role === "user" || role === "admin") {
     if (isDashboard) {
       // Dashboard ke liye saara data fetch karein taaki accurate sum dikhe
       const entries = await PurchaseEntry.find(filter)
-        .sort({ date: -1 })
+        .sort({ date: -1, createdAt: -1, _id: -1 })
         .populate("products.product", "name productName")
         .populate({ path: "vendor", select: "vendorName" })
         .lean();
@@ -882,7 +910,7 @@ if (role === "user" || role === "admin") {
     const totalPages = Math.ceil(total / limit);
 
     const data = await PurchaseEntry.find(filter)
-      .sort({ date: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit)
       .populate({ path: "vendor", select: "vendorName" })
@@ -892,6 +920,7 @@ if (role === "user" || role === "admin") {
       .populate({ path: "company", select: "businessName" })
       .lean();
 
+    // console.log(`🔍 PURCHASE - Found ${data.length} entries out of ${total} total`);
     res.status(200).json({
       success: true,
       total,
@@ -933,7 +962,7 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
     if (companyId && companyId !== "all" && companyId !== "undefined") {
       where.company = companyId;
     }
-    let query = PurchaseEntry.find(where).sort({ date: -1 });
+    let query = PurchaseEntry.find(where).sort({ date: -1, createdAt: -1, _id: -1 });
 
     if (req.query.limit !== 'all') {
       const perPage = Math.min(Number(limit) || 100, 500);

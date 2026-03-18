@@ -13,7 +13,6 @@ const {
   deleteSalesEntryCache,
   deleteSalesEntryCacheByUser,
 } = require("../utils/cacheHelpers");
-// at top of controllers/proformaController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
@@ -21,7 +20,6 @@ const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 async function ensureAuthCaps(req) {
-  // Normalize: support old middlewares that used req.user
   if (!req.auth && req.user)
     req.auth = {
       clientId: req.user.id,
@@ -29,14 +27,12 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
-      userName: req.user.userName || "Unknown", // Ensure userName is set here
+      userName: req.user.userName || "Unknown",
       clientName: req.user.contactName,
     };
 
-  // If there's no auth context, throw error
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
 
-  // If caps or allowedCompanies are missing, load them
   if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
     const { caps, allowedCompanies } = await getEffectivePermissions({
       clientId: req.auth.clientId,
@@ -46,13 +42,6 @@ async function ensureAuthCaps(req) {
     req.auth.allowedCompanies = req.auth.allowedCompanies || allowedCompanies;
   }
 
-  // If userName is still not set, query the database for user details
-  // if (!req.auth.userName) {
-  //   const user = await User.findById(req.auth.userId);  // Assuming the userId is correct
-  //   req.auth.userName = user ? user.userName : 'Unknown';  // Fallback to 'Unknown' if user is not found
-  // }
-
-  // updated: only for staff (non-client) logins
   if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
     const user = await User.findById(req.auth.userId)
       .select("displayName fullName name userName username email")
@@ -64,7 +53,7 @@ async function ensureAuthCaps(req) {
       user?.userName ||
       user?.username ||
       user?.email ||
-      undefined; // no "Unknown" fallback here
+      undefined;
   }
 }
 
@@ -73,16 +62,13 @@ function userIsPriv(req) {
 }
 
 function companyAllowedForUser(req, companyId) {
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
-
-
-// Build message text per action
 function buildProformaNotificationMessage(
   action,
   { actorName, partyName, invoiceNumber, amount }
@@ -103,7 +89,6 @@ function buildProformaNotificationMessage(
   }
 }
 
-// Unified notifier for proforma module
 async function notifyAdminOnProformaAction({
   req,
   action,
@@ -127,128 +112,53 @@ async function notifyAdminOnProformaAction({
 
   await createNotification(
     message,
-    adminUser._id, // recipient (admin)
-    actor.id, // actor id (user OR client)
-    action, // "create" | "update" | "delete"
-    "proforma", // entry type / category
-    entryId, // proforma entry id
+    adminUser._id,
+    actor.id,
+    action,
+    "proforma",
+    entryId,
     req.auth.clientId
   );
 }
 
-
-
-// exports.getProformaEntries = async (req, res) => {
-//   try {
-
-//     await ensureAuthCaps(req); // Ensure auth context is loaded
-    
-//     const filter = {};
-
-//     if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
-    
-//     // For client users, restrict to their client ID AND allowed companies
-//     if (req.auth.role === "client") {
-//       filter.client = req.auth.clientId;
-//     }
-    
-//     // If companyId is provided, validate the user has access to it
-//     if (req.query.companyId) {
-//       const companyId = req.query.companyId;
-      
-//       // Check if user is allowed to access this company
-//       if (!companyAllowedForUser(req, companyId)) {
-//         return res.status(403).json({ 
-//           success: false, 
-//           message: "Access denied to this company" 
-//         });
-//       }
-      
-//       filter.company = companyId;
-//     } else {
-//       // If no companyId specified, show only companies the user is allowed to access
-//       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
-//         filter.company = { $in: req.auth.allowedCompanies };
-
-//       }
-//     }
-
-//     // Construct a SECURE cache key based on user context
-//     const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
-
-//     // Check if the data is cached in Redis
-//     // const cachedEntries = await getFromCache(cacheKey);
-//     // if (cachedEntries) {
-//     //   return res.status(200).json({
-//     //     success: true,
-//     //     count: cachedEntries.length,
-//     //     data: cachedEntries,
-//     //   });
-//     // }
-
-//     // If not cached, fetch the data from the database
-//     const entries = await ProformaEntry.find(filter)
-//       .populate("party", "name")
-//       .populate("products.product", "name")
-//       .populate({
-//         path: "services.service",
-//         select: "serviceName",
-//         strictPopulate: false,
-//       })
-//       .populate("company", "businessName")
-//       .populate("shippingAddress")
-//       .populate("bank")
-//       .sort({ date: -1 });
-
-//     // Cache the fetched data in Redis for future requests
-//     // await setToCache(cacheKey, entries);
-
-//     res.status(200).json({
-//       success: true,
-//       count: entries.length,
-//       data: entries,
-//     });
-//   } catch (err) {
-//     console.error("Error fetching proforma entries:", err.message);
-//     res.status(500).json({
-//       success: false,
-//       error: err.message,
-//     });
-//   }
-// };
-
-// controllers/proformaController.js
 // controllers/proformaController.js - WORKING VERSION WITH PAGINATION
 exports.getProformaEntries = async (req, res) => {
   try {
-    await ensureAuthCaps(req); // Ensure auth context is loaded
-    
+    await ensureAuthCaps(req);
+
     const filter = {};
 
     if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
-    
-    // For client users, restrict to their client ID AND allowed companies
-    if (req.auth.role === "client") {
+
+    // Scope all non-master roles to their tenant
+    if (req.auth.role !== "master") {
       filter.client = req.auth.clientId;
     }
-    
+    if (!userIsPriv(req)) {
+      const canShowAll = req.auth.caps?.canShowProformaEntries === true;
+      if (!canShowAll) {
+        // Restrict to entries created by this user only
+        filter.createdByUser = req.auth.userId;
+      }
+    }
     // If companyId is provided, validate the user has access to it
-    if (req.query.companyId) {
+    if (
+      req.query.companyId &&
+      req.query.companyId !== "all" &&
+      req.query.companyId !== "undefined"
+    ) {
       const companyId = req.query.companyId;
-      
-      // Check if user is allowed to access this company
+
       if (!companyAllowedForUser(req, companyId)) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Access denied to this company" 
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this company",
         });
       }
-      
+
       filter.company = companyId;
-   } else {
-      
+    } else {
       if (req.auth.role !== "client" && req.auth.role !== "master") {
-        
         const allowedCompanies = req.auth.allowedCompanies || [];
 
         if (allowedCompanies.length > 0) {
@@ -262,33 +172,29 @@ exports.getProformaEntries = async (req, res) => {
             limit: 20,
             totalPages: 0,
             data: [],
-            message: "No companies assigned to this user"
+            message: "No companies assigned to this user",
           });
         }
       }
     }
 
-    // Date range filtering (if needed)
-   const { startDate, endDate, dateFrom, dateTo } = req.query;
+    // Date range filtering
+    const { startDate, endDate, dateFrom, dateTo } = req.query;
     const finalStart = startDate || dateFrom;
     const finalEnd = endDate || dateTo;
 
     if (finalStart || finalEnd) {
       filter.date = {};
-      if (finalStart) {
-        filter.date.$gte = new Date(`${finalStart}T00:00:00`);
-      }
-      if (finalEnd) {
-        filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
-      }
+      if (finalStart) filter.date.$gte = new Date(`${finalStart}T00:00:00`);
+      if (finalEnd) filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
     }
-    // Search filtering (if needed)
+    // Search filtering
     if (req.query.q) {
       const searchTerm = String(req.query.q);
       filter.$or = [
         { description: { $regex: searchTerm, $options: "i" } },
         { proformaNumber: { $regex: searchTerm, $options: "i" } },
-        { 'party.name': { $regex: searchTerm, $options: "i" } }
+        { "party.name": { $regex: searchTerm, $options: "i" } },
       ];
     }
 
@@ -296,32 +202,25 @@ exports.getProformaEntries = async (req, res) => {
 
     // --- SERVER-SIDE PAGINATION ---
     const page = parseInt(req.query.page) || 1;
-    let limit = parseInt(req.query.limit) || 20; // Default to 20 for pagination
-    
-    // Validate pagination parameters
-    if (page < 1) page = 1;
+    let limit = parseInt(req.query.limit) || 20;
     if (limit < 1 || limit > 5000) limit = 20;
-    
-    // Calculate total count
+
     const total = await ProformaEntry.countDocuments(filter);
-    
-    // Smart limit adjustment for large datasets
+
     let effectiveLimit = limit;
     if (total > 10000 && !req.query.limit) {
       console.log(`Large proforma dataset detected: ${total} entries. Auto-adjusting limit to 200.`);
       effectiveLimit = Math.min(200, limit);
     }
-    
+
     const skip = (page - 1) * effectiveLimit;
     const totalPages = Math.ceil(total / effectiveLimit);
-    
-    // Adjust page if it exceeds total pages
+
     let effectivePage = page;
     if (totalPages > 0 && page > totalPages) {
       effectivePage = totalPages;
     }
 
-    // Build query with pagination
     const query = ProformaEntry.find(filter)
       .populate("party", "name email phoneNumber")
       .populate("products.product", "name unitType hsn pricePerUnit")
@@ -331,35 +230,28 @@ exports.getProformaEntries = async (req, res) => {
         strictPopulate: false,
       })
       .populate({
-        path: "services.serviceName", // Support both field names
+        path: "services.serviceName",
         select: "serviceName sac pricePerUnit",
         strictPopulate: false,
       })
       .populate("company", "businessName address gstin")
       .populate("shippingAddress", "addressLine1 city state postalCode")
       .populate("bank", "bankName accountNumber ifsc")
-      .sort({ date: -1 });
+      .sort({ date: -1, createdAt: -1, _id: -1 });
 
-    // Apply pagination
     let entries;
     if (total <= 10000 && !req.query.page && !req.query.limit) {
-      // Small dataset without pagination parameters - return all (backward compatible)
+      // Small dataset without pagination — return all (backward compatible)
       entries = await query.lean();
       effectivePage = 1;
       effectiveLimit = total;
     } else {
-      // Apply pagination
       entries = await query.skip(skip).limit(effectiveLimit).lean();
     }
 
-    // Add type field for frontend
-    const typedEntries = entries.map(entry => ({ 
-      ...entry, 
-      type: "proforma" 
-    }));
+    const typedEntries = entries.map((entry) => ({ ...entry, type: "proforma" }));
 
-    // Construct response (similar to sales controller)
-    const response = {
+    res.status(200).json({
       success: true,
       total,
       count: typedEntries.length,
@@ -367,14 +259,7 @@ exports.getProformaEntries = async (req, res) => {
       limit: effectiveLimit,
       totalPages,
       data: typedEntries,
-    };
-
-    // Add cache logic if needed (commented out in your original)
-    // const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}:page${page}:limit${limit}`;
-    // await setToCache(cacheKey, response, 300); // Cache for 5 minutes
-
-    res.status(200).json(response);
-
+    });
   } catch (err) {
     console.error("Error fetching proforma entries:", err.message);
     console.error("Error stack:", err.stack);
@@ -385,27 +270,11 @@ exports.getProformaEntries = async (req, res) => {
   }
 };
 
-
 // GET Proforma Entries by clientId (for master admin)
 exports.getProformaEntriesByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Construct a cache key based on clientId
-    const cacheKey = `proformaEntriesByClient:${clientId}`;
-
-    // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   // If cached, return the data directly
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
-    // Fetch data from database if not cached
     const entries = await ProformaEntry.find({ client: clientId })
       .populate("party", "name")
       .populate("products.product", "name")
@@ -417,12 +286,8 @@ exports.getProformaEntriesByClient = async (req, res) => {
       .populate("company", "businessName")
       .populate("shippingAddress")
       .populate("bank")
-      .sort({ date: -1 });
+      .sort({ date: -1, createdAt: -1, _id: -1 });
 
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, entries);
-
-    // Return the fetched data
     res.status(200).json({ entries });
   } catch (err) {
     res
@@ -431,23 +296,18 @@ exports.getProformaEntriesByClient = async (req, res) => {
   }
 };
 
-
-
-
 exports.createProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc, selectedBank;
 
   try {
-    // Ensure the user has permission
     await ensureAuthCaps(req);
-    if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
+    if (!userIsPriv(req) && !req.auth.caps?.canCreateProformaEntries) {
       return res
         .status(403)
         .json({ message: "Not allowed to create proforma entries" });
     }
 
-    // Destructure the request body
     const {
       company: companyId,
       paymentMethod,
@@ -468,7 +328,6 @@ exports.createProformaEntry = async (req, res) => {
     }
 
     await session.withTransaction(async () => {
-      // Handle transaction logic here
       const {
         party,
         company: companyId,
@@ -501,7 +360,6 @@ exports.createProformaEntry = async (req, res) => {
       }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      // Normalize products with GST calculations
       let normalizedProducts = [],
         productsTotal = 0,
         productsTax = 0;
@@ -516,7 +374,6 @@ exports.createProformaEntry = async (req, res) => {
         productsTax = computedTax;
       }
 
-      // Normalize services with GST calculations
       let normalizedServices = [],
         servicesTotal = 0,
         servicesTax = 0;
@@ -563,8 +420,8 @@ exports.createProformaEntry = async (req, res) => {
                 products: normalizedProducts,
                 services: normalizedServices,
                 totalAmount: finalTotal,
-                taxAmount: finalTaxAmount, // NEW: Save total tax amount
-                subTotal: computedSubtotal, // NEW: Save subtotal
+                taxAmount: finalTaxAmount,
+                subTotal: computedSubtotal,
                 description,
                 referenceNumber,
                 gstPercentage:
@@ -588,11 +445,7 @@ exports.createProformaEntry = async (req, res) => {
 
           entry = docs[0];
 
-          // Ensure only one response is sent
           if (!res.headersSent) {
-            // After proforma entry is created, notify the admin
-
-            // Notify admin AFTER entry created (and before response)
             await notifyAdminOnProformaAction({
               req,
               action: "create",
@@ -615,32 +468,38 @@ exports.createProformaEntry = async (req, res) => {
               ],
               { session }
             );
+
             try {
-                if (global.io) {
-                  console.log('📡 Emitting transaction-update (create proforma)...');
-                  
-                  const socketPayload = {
-                    message: 'New Proforma Entry',
-                    type: 'proforma', // Frontend is type ko check karega
-                    action: 'create',
-                    entryId: entry._id,
-                    amount: entry.totalAmount,
-                    partyName: partyDoc?.name
-                  };
+              if (global.io) {
+                console.log("📡 Emitting transaction-update (create proforma)...");
 
-                  // 1. Emit to Client Room
-                  global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+                const socketPayload = {
+                  message: "New Proforma Entry",
+                  type: "proforma",
+                  action: "create",
+                  entryId: entry._id,
+                  amount: entry.totalAmount,
+                  partyName: partyDoc?.name,
+                };
 
-                  // 2. Emit to Global/Admin Room
-                  global.io.to('all-transactions-updates').emit('transaction-update', {
+                global.io
+                  .to(`client-${req.auth.clientId}`)
+                  .emit("transaction-update", socketPayload);
+
+                global.io
+                  .to("all-transactions-updates")
+                  .emit("transaction-update", {
                     ...socketPayload,
-                    clientId: req.auth.clientId
+                    clientId: req.auth.clientId,
                   });
-                }
+              }
             } catch (socketError) {
-                console.error("⚠️ Socket Emit Failed (Proforma Create):", socketError.message);
+              console.error(
+                "⚠️ Socket Emit Failed (Proforma Create):",
+                socketError.message
+              );
             }
-            // Send response after notification creation
+
             return res
               .status(201)
               .json({ message: "Proforma entry created successfully", entry });
@@ -652,9 +511,7 @@ exports.createProformaEntry = async (req, res) => {
       }
     });
 
-    const clientId = entry.client.toString(); // Retrieve clientId from the entry
-
-    // Call the reusable cache deletion function
+    const clientId = entry.client.toString();
     await deleteSalesEntryCache(clientId, companyId);
   } catch (err) {
     console.error("createProformaEntry error:", err);
@@ -675,30 +532,36 @@ exports.updateProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
-    // Ensure the user has permission
     await ensureAuthCaps(req);
-    if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res.status(403).json({ message: "Not allowed to update proforma entries" });
+    if (!userIsPriv(req) && !req.auth.caps?.canCreateProformaEntries) {
+      return res
+        .status(403)
+        .json({ message: "Not allowed to update proforma entries" });
     }
 
-    // Find the proforma entry by ID
     const entry = await ProformaEntry.findById(req.params.id);
     if (!entry)
       return res.status(404).json({ message: "Proforma entry not found" });
 
-    // Tenant auth: allow privileged roles or same tenant only
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const { products, services, paymentMethod, totalAmount, party, shippingAddress, bank, ...otherUpdates } = req.body;
+    const {
+      products,
+      services,
+      paymentMethod,
+      totalAmount,
+      party,
+      shippingAddress,
+      bank,
+      ...otherUpdates
+    } = req.body;
 
-    // Store original values for credit adjustment
     const originalPaymentMethod = entry.paymentMethod;
     const originalTotalAmount = entry.totalAmount;
     const originalPartyId = entry.party.toString();
 
-    // If company is being changed, check permission + existence
     if (otherUpdates.company) {
       if (!companyAllowedForUser(req, otherUpdates.company)) {
         return res
@@ -714,7 +577,6 @@ exports.updateProformaEntry = async (req, res) => {
       }
     }
 
-    // If party is being changed, validate it belongs to the same tenant
     let partyDoc = null;
     if (otherUpdates.party) {
       partyDoc = await Party.findOne({
@@ -731,7 +593,6 @@ exports.updateProformaEntry = async (req, res) => {
     let productsTotal = 0;
     let servicesTotal = 0;
 
-    // Normalize product lines only if provided (Array.isArray allows clearing with [])
     if (Array.isArray(products)) {
       const { items: normalizedProducts, computedTotal } =
         await normalizeProducts(products, req.auth.clientId);
@@ -739,7 +600,6 @@ exports.updateProformaEntry = async (req, res) => {
       productsTotal = computedTotal;
     }
 
-    // Normalize service lines only if provided (Array.isArray allows clearing with [])
     if (Array.isArray(services)) {
       const { items: normalizedServices, computedTotal } =
         await normalizeServices(services, req.auth.clientId);
@@ -747,32 +607,16 @@ exports.updateProformaEntry = async (req, res) => {
       servicesTotal = computedTotal;
     }
 
-    // Don't allow changing invoiceNumber/year from payload
     const { invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } = otherUpdates;
-    if (typeof gstRate === "number") {
-      entry.gstPercentage = gstRate;
-    }
-    if (notes !== undefined) {
-      entry.notes = notes;
-    }
-    if (shippingAddress !== undefined) {
-      entry.shippingAddress = shippingAddress;
-    }
-    if (bank !== undefined) {
-      entry.bank = bank;
-    }
+    if (typeof gstRate === "number") entry.gstPercentage = gstRate;
+    if (notes !== undefined) entry.notes = notes;
+    if (shippingAddress !== undefined) entry.shippingAddress = shippingAddress;
+    if (bank !== undefined) entry.bank = bank;
     Object.assign(entry, rest);
 
-    // Handle payment method and party changes for credit adjustment
-    if (paymentMethod !== undefined) {
-      entry.paymentMethod = paymentMethod;
-    }
+    if (paymentMethod !== undefined) entry.paymentMethod = paymentMethod;
+    if (party !== undefined) entry.party = party;
 
-    if (party !== undefined) {
-      entry.party = party;
-    }
-
-    // Recalculate total if not explicitly provided
     if (typeof totalAmount === "number") {
       entry.totalAmount = totalAmount;
     } else {
@@ -792,44 +636,52 @@ exports.updateProformaEntry = async (req, res) => {
     await notifyAdminOnProformaAction({
       req,
       action: "update",
-      partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party",
+      partyName:
+        (partyDoc ? partyDoc.name : null) ||
+        entry?.party?.name ||
+        "Unknown Party",
       entryId: entry._id,
       companyId: entry.company?.toString(),
     });
 
     await entry.save();
 
-    // Retrieve companyId and clientId from the proforma entry to delete related cache
     const companyId = entry.company.toString();
     const clientId = entry.client.toString();
-
-    // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
 
     try {
       if (global.io) {
-        console.log('📡 Emitting transaction-update (update proforma)...');
+        console.log("📡 Emitting transaction-update (update proforma)...");
 
         const socketPayload = {
-          message: 'Proforma Entry Updated',
-          type: 'proforma',
-          action: 'update',
+          message: "Proforma Entry Updated",
+          type: "proforma",
+          action: "update",
           entryId: entry._id,
           amount: entry.totalAmount,
-          partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party"
+          partyName:
+            (partyDoc ? partyDoc.name : null) ||
+            entry?.party?.name ||
+            "Unknown Party",
         };
 
-        // Emit to Client Room
-        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+        global.io
+          .to(`client-${req.auth.clientId}`)
+          .emit("transaction-update", socketPayload);
 
-        // Emit to Global Room
-        global.io.to('all-transactions-updates').emit('transaction-update', {
-          ...socketPayload,
-          clientId: req.auth.clientId
-        });
+        global.io
+          .to("all-transactions-updates")
+          .emit("transaction-update", {
+            ...socketPayload,
+            clientId: req.auth.clientId,
+          });
       }
     } catch (socketError) {
-      console.error("⚠️ Socket Emit Failed (Proforma Update):", socketError.message);
+      console.error(
+        "⚠️ Socket Emit Failed (Proforma Update):",
+        socketError.message
+      );
     }
 
     res.json({ message: "Proforma entry updated successfully", entry });
@@ -841,100 +693,34 @@ exports.updateProformaEntry = async (req, res) => {
   }
 };
 
-// exports.deleteProformaEntry = async (req, res) => {
-//   const session = await mongoose.startSession();
-
-//   try {
-//     await ensureAuthCaps(req);
-//     // Find the proforma entry by ID
-//     const entry = await ProformaEntry.findById(req.params.id);
-
-//     if (!entry) {
-//       return res.status(404).json({ message: "Proforma entry not found" });
-//     }
-
-//     // Only allow clients to delete their own entries
-//     if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
-//       return res.status(403).json({ message: "Unauthorized" });
-//     }
-
-//     // Fetch the party document
-//     const partyDoc = await Party.findById(entry.party);
-//     if (!partyDoc) {
-//       console.error("Party not found");
-//       return res.status(400).json({ message: "Party not found" });
-//     }
-
-//     // Start the transaction
-//     await session.withTransaction(async () => {
-//       // Delete the proforma entry
-//       await entry.deleteOne();
-
-//       // Retrieve companyId and clientId from the proforma entry to delete related cache
-//       const companyId = entry.company.toString();
-//       const clientId = entry.client.toString(); // Retrieve clientId from the entry
-
-//       await notifyAdminOnProformaAction({
-//         req,
-//         action: "delete",
-//         partyName: partyDoc?.name,
-//         entryId: entry._id,
-//         companyId,
-//       });
-//       // Invalidate cache next
-//       await deleteSalesEntryCache(clientId, companyId);
-//       // Respond
-//       res.status(200).json({ message: "Proforma entry deleted successfully" });
-//     });
-//   } catch (err) {
-//     console.error("Error deleting proforma entry:", err);
-//     res.status(500).json({ error: err.message });
-//   } finally {
-//     session.endSession();
-//   }
-// };
-
 exports.deleteProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
     await ensureAuthCaps(req);
-    
-    // Find the proforma entry by ID
+
     const entry = await ProformaEntry.findById(req.params.id);
     if (!entry) {
-      return res.status(404).json({ 
-        success: false,
-        message: "Proforma entry not found" 
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Proforma entry not found" });
     }
 
-
-    // Enhanced authorization check using auth context
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
-      return res.status(403).json({ 
-        success: false,
-        message: "Unauthorized" 
-      });
-
+      return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // Fetch the party document for notification
     const partyDoc = await Party.findById(entry.party);
     if (!partyDoc) {
       console.error("Party not found");
-      return res.status(400).json({ 
-        success: false,
-        message: "Party not found" 
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Party not found" });
     }
 
-    // Start the transaction
     await session.withTransaction(async () => {
-      // Delete the proforma entry
       await ProformaEntry.deleteOne({ _id: entry._id }).session(session);
 
-      // Notify admin
       await notifyAdminOnProformaAction({
         req,
         action: "delete",
@@ -943,46 +729,47 @@ exports.deleteProformaEntry = async (req, res) => {
         companyId: entry.company?.toString(),
       });
 
-      // Invalidate cache
       const companyId = entry.company.toString();
       const clientId = entry.client.toString();
       await deleteSalesEntryCache(clientId, companyId);
-try {
+
+      try {
         if (global.io) {
-          console.log('📡 Emitting transaction-update (delete proforma)...');
+          console.log("📡 Emitting transaction-update (delete proforma)...");
 
           const socketPayload = {
-            message: 'Proforma Entry Deleted',
-            type: 'proforma',
-            action: 'delete',
+            message: "Proforma Entry Deleted",
+            type: "proforma",
+            action: "delete",
             entryId: entry._id,
-            partyName: partyDoc?.name
+            partyName: partyDoc?.name,
           };
 
-          // Emit to Client Room
-          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+          global.io
+            .to(`client-${req.auth.clientId}`)
+            .emit("transaction-update", socketPayload);
 
-          // Emit to Global Room
-          global.io.to('all-transactions-updates').emit('transaction-update', {
-            ...socketPayload,
-            clientId: req.auth.clientId
-          });
+          global.io
+            .to("all-transactions-updates")
+            .emit("transaction-update", {
+              ...socketPayload,
+              clientId: req.auth.clientId,
+            });
         }
       } catch (socketError) {
-        console.error("⚠️ Socket Emit Failed (Proforma Delete):", socketError.message);
+        console.error(
+          "⚠️ Socket Emit Failed (Proforma Delete):",
+          socketError.message
+        );
       }
-      // Respond
-      res.status(200).json({ 
-        success: true,
-        message: "Proforma entry deleted successfully" 
-      });
+
+      res
+        .status(200)
+        .json({ success: true, message: "Proforma entry deleted successfully" });
     });
   } catch (err) {
     console.error("Error deleting proforma entry:", err);
-    res.status(500).json({ 
-      success: false,
-      error: err.message 
-    });
+    res.status(500).json({ success: false, error: err.message });
   } finally {
     session.endSession();
   }

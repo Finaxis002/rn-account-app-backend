@@ -12,6 +12,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/vision": "^5.3.4",
+    "@google/generative-ai": "^0.24.1",
     "@whiskeysockets/baileys": "^6.7.20",
     "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
@@ -33,6 +35,7 @@
     "nodemailer": "^7.0.5",
     "papaparse": "^5.5.3",
     "path": "^0.12.7",
+    "pdf-parse": "^1.1.1",
     "qrcode-terminal": "^0.12.0",
     "socket.io": "^4.8.1",
     "twilio": "^5.9.0",

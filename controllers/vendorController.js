@@ -22,8 +22,8 @@ async function ensureAuthCaps(req) {
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
       // do NOT force "Unknown" – let resolver fetch names correctly
-      userName: req.user.userName,       // may be undefined for clients
-      clientName: req.user.contactName,  // if your auth layer sets it for clients
+      userName: req.user.userName, // may be undefined for clients
+      clientName: req.user.contactName, // if your auth layer sets it for clients
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -34,10 +34,10 @@ async function ensureAuthCaps(req) {
       userId: req.auth.userId,
     });
     if (!req.auth.caps) req.auth.caps = caps;
-    if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
+    if (!req.auth.allowedCompanies)
+      req.auth.allowedCompanies = allowedCompanies;
   }
 }
-
 
 // Build message text per action
 function buildVendorNotificationMessage(action, { actorName, vendorName }) {
@@ -75,7 +75,7 @@ async function notifyAdminOnVendorAction({ req, action, vendorName, entryId }) {
     action, // "create" | "update" | "delete"
     "vendor", // entry type / category
     entryId, // vendor id
-    req.auth.clientId
+    req.auth.clientId,
   );
 }
 
@@ -87,7 +87,6 @@ exports.createVendor = async (req, res) => {
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
       return res.status(403).json({ message: "Not allowed to create vendors" });
     }
-
 
     const {
       vendorName,
@@ -104,20 +103,25 @@ exports.createVendor = async (req, res) => {
     } = req.body;
 
     // Validation - ONLY vendorName is required
-if (!vendorName || vendorName.trim().length < 2) {
-  return res.status(400).json({ message: "Vendor name is required and must be at least 2 characters." });
-}
+    if (!vendorName || vendorName.trim().length < 2) {
+      return res.status(400).json({
+        message: "Vendor name is required and must be at least 2 characters.",
+      });
+    }
 
-// Optional validations - only check if value is provided
-if (contactNumber && !/^[6-9]\d{9}$/.test(contactNumber)) {
-  return res.status(400).json({ message: "Invalid mobile number. Must be 10 digits starting with 6-9." });
-}
+    // Optional validations - only check if value is provided
+    // Aisa regex use karein jo +91 (ya koi bhi code) aur 10-12 digits accept kare
+    const phoneRegex = /^\+?\d{1,4}\d{7,12}$/;
 
-if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-  return res.status(400).json({ message: "Invalid email format." });
-}
+    if (contactNumber && !phoneRegex.test(contactNumber.replace(/\s/g, ""))) {
+      return res.status(400).json({
+        message: "Invalid mobile number format. Must be 10 digits starting with 6-9.",
+      });
+    }
 
-
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Invalid email format." });
+    }
 
     const vendor = await Vendor.create({
       vendorName,
@@ -149,16 +153,15 @@ if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       // Better error message extraction
       const keyPattern = err.keyPattern;
       let message = "Duplicate field error";
-      
+
       if (keyPattern.contactNumber && keyPattern.createdByClient) {
         message = "Contact number already exists for this client";
       } else if (keyPattern.email && keyPattern.createdByClient) {
         message = "Email already exists for this client";
       } else {
-      
         message = `Duplicate field: ${Object.keys(err.keyValue)[0]}`;
       }
-      
+
       return res.status(400).json({ message });
     }
     res.status(500).json({ message: "Server error", error: err.message });
@@ -223,12 +226,14 @@ exports.getVendors = async (req, res) => {
 
     // ✅ SMART LIMIT HANDLING
     let perPage = limit ? Number(limit) : 10000; // Default to 10000 if limit not provided
-    
+
     // Optional: Add warning for very high limits
     if (perPage && perPage > 100000) {
-      console.warn(`Very high vendor limit requested: ${perPage}. This may impact performance.`);
+      console.warn(
+        `Very high vendor limit requested: ${perPage}. This may impact performance.`,
+      );
     }
-    
+
     const skip = (Number(page) - 1) * perPage;
 
     const query = Vendor.find(where)
@@ -241,13 +246,13 @@ exports.getVendors = async (req, res) => {
       Vendor.countDocuments(where),
     ]);
 
-    res.json({ 
-      vendors, 
-      total, 
-      page: Number(page), 
+    res.json({
+      vendors,
+      total,
+      page: Number(page),
       limit: perPage,
       totalPages: Math.ceil(total / perPage),
-      hasMore: total > (skip + vendors.length)
+      hasMore: total > skip + vendors.length,
     });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -295,7 +300,7 @@ exports.getVendorBalance = async (req, res) => {
     // Filter Setup
     const matchFilter = {
       client: clientId,
-      vendor: vId
+      vendor: vId,
     };
     if (companyId) {
       matchFilter.company = new mongoose.Types.ObjectId(companyId);
@@ -304,28 +309,33 @@ exports.getVendorBalance = async (req, res) => {
     // 1. Calculate Purchases (Total & Cash)
     const purchaseAgg = await PurchaseEntry.aggregate([
       { $match: matchFilter },
-      { 
-        $group: { 
-          _id: null, 
+      {
+        $group: {
+          _id: null,
           totalAmount: { $sum: "$totalAmount" },
-         
-          cashAmount: { 
-            $sum: { 
-              $cond: [{ $ne: ["$paymentMethod", "Credit"] }, "$totalAmount", 0] 
-            } 
-          }
-        } 
-      }
+
+          cashAmount: {
+            $sum: {
+              $cond: [{ $ne: ["$paymentMethod", "Credit"] }, "$totalAmount", 0],
+            },
+          },
+        },
+      },
     ]);
 
-    const totalPurchases = purchaseAgg.length > 0 ? purchaseAgg[0].totalAmount : 0;
-    const cashPurchases = purchaseAgg.length > 0 ? purchaseAgg[0].cashAmount : 0;
+    const totalPurchases =
+      purchaseAgg.length > 0 ? purchaseAgg[0].totalAmount : 0;
+    const cashPurchases =
+      purchaseAgg.length > 0 ? purchaseAgg[0].cashAmount : 0;
 
     // 2. Calculate Actual Payments (Manual Payments)
-    const paymentMatchFilter = { ...matchFilter, paymentMethod: { $ne: "Credit" } };
+    const paymentMatchFilter = {
+      ...matchFilter,
+      paymentMethod: { $ne: "Credit" },
+    };
     const paymentAgg = await PaymentEntry.aggregate([
       { $match: paymentMatchFilter },
-      { $group: { _id: null, total: { $sum: "$amount" } } }
+      { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
     const manualPayments = paymentAgg.length > 0 ? paymentAgg[0].total : 0;
 
@@ -337,34 +347,33 @@ exports.getVendorBalance = async (req, res) => {
 
     // "All Companies" Logic: Opening Balance handle karo
     if (!companyId && vendor.openingBalance) {
-        currentBalance = currentBalance - (vendor.openingBalance || 0);
+      currentBalance = currentBalance - (vendor.openingBalance || 0);
     }
 
     // 5. Database Update (Auto-Fix)
     if (companyId) {
-       if (!vendor.balances) vendor.balances = new Map();
-       if (vendor.balances.get(companyId) !== currentBalance) {
-           vendor.balances.set(companyId, currentBalance);
-           await vendor.save();
-       }
+      if (!vendor.balances) vendor.balances = new Map();
+      if (vendor.balances.get(companyId) !== currentBalance) {
+        vendor.balances.set(companyId, currentBalance);
+        await vendor.save();
+      }
     } else {
-       // Global update
-       if (vendor.balance !== currentBalance) {
-           vendor.balance = currentBalance;
-           await vendor.save();
-       }
+      // Global update
+      if (vendor.balance !== currentBalance) {
+        vendor.balance = currentBalance;
+        await vendor.save();
+      }
     }
 
-    res.json({ 
+    res.json({
       balance: currentBalance,
       breakdown: {
         totalPurchases,
         totalPayments,
         manualPayments,
-        cashPurchases
-      }
+        cashPurchases,
+      },
     });
-
   } catch (err) {
     console.error("Error fetching vendor balance:", err);
     res.status(500).json({ message: "Server error", error: err.message });
@@ -376,16 +385,16 @@ exports.getVendorBalancesBulk = async (req, res) => {
   try {
     const where = { createdByClient: req.auth.clientId };
 
-    const rows = await Vendor.find(where)
-      .select({ _id: 1, balance: 1 })
-      .lean();
+    const rows = await Vendor.find(where).select({ _id: 1, balance: 1 }).lean();
 
     const balances = {};
 
     return res.json({ balances });
   } catch (err) {
     console.error("getVendorBalancesBulk error:", err);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: err.message });
   }
 };
 
@@ -407,10 +416,12 @@ exports.updateVendor = async (req, res) => {
     if (up.city != null) doc.city = up.city;
     if (up.state != null) doc.state = up.state;
     if (up.gstin != null) doc.gstin = up.gstin;
-    if (up.gstRegistrationType != null) doc.gstRegistrationType = up.gstRegistrationType;
+    if (up.gstRegistrationType != null)
+      doc.gstRegistrationType = up.gstRegistrationType;
     if (up.pan != null) doc.pan = up.pan;
-    if (typeof up.isTDSApplicable === "boolean") doc.isTDSApplicable = up.isTDSApplicable;
- if (up.company != null) {
+    if (typeof up.isTDSApplicable === "boolean")
+      doc.isTDSApplicable = up.isTDSApplicable;
+    if (up.company != null) {
       doc.company = Array.isArray(up.company) ? up.company : [up.company];
     }
     await doc.save();
@@ -475,58 +486,67 @@ exports.downloadImportTemplate = async (req, res) => {
     }
 
     // Create Excel template with headers
-    const ExcelJS = require('exceljs');
+    const ExcelJS = require("exceljs");
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Vendor Import Template');
+    const worksheet = workbook.addWorksheet("Vendor Import Template");
 
     // Define columns
     worksheet.columns = [
-      { header: 'Vendor Name*', key: 'vendorname*', width: 20 },
-      { header: 'Contact Number', key: 'contactnumber', width: 15 },
-      { header: 'Email', key: 'email', width: 25 },
-      { header: 'Address', key: 'address', width: 30 },
-      { header: 'City', key: 'city', width: 15 },
-      { header: 'State', key: 'state', width: 15 },
-      { header: 'GSTIN', key: 'gstin', width: 15 },
-      { header: 'GST Registration Type', key: 'gstregistrationtype', width: 20 },
-      { header: 'PAN', key: 'pan', width: 15 },
-      { header: 'TDS Applicable (Yes/No)', key: 'istdsapplicable', width: 20 },
-      { header: 'TDS Section', key: 'tdssection', width: 15 }
+      { header: "Vendor Name*", key: "vendorname*", width: 20 },
+      { header: "Contact Number", key: "contactnumber", width: 15 },
+      { header: "Email", key: "email", width: 25 },
+      { header: "Address", key: "address", width: 30 },
+      { header: "City", key: "city", width: 15 },
+      { header: "State", key: "state", width: 15 },
+      { header: "GSTIN", key: "gstin", width: 15 },
+      {
+        header: "GST Registration Type",
+        key: "gstregistrationtype",
+        width: 20,
+      },
+      { header: "PAN", key: "pan", width: 15 },
+      { header: "TDS Applicable (Yes/No)", key: "istdsapplicable", width: 20 },
+      { header: "TDS Section", key: "tdssection", width: 15 },
     ];
 
     // Add sample data row
     worksheet.addRow({
-      'vendorname*': 'ABC Suppliers',
-      contactnumber: '9876543210',
-      email: 'contact@abc.com',
-      address: '123 Main Street',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      gstin: '22AAAAA0000A1Z5',
-      gstregistrationtype: 'Regular',
-      pan: 'AAAAA0000A',
-      'istdsapplicable': 'Yes',
-      tdssection: '194C'
+      "vendorname*": "ABC Suppliers",
+      contactnumber: "9876543210",
+      email: "contact@abc.com",
+      address: "123 Main Street",
+      city: "Mumbai",
+      state: "Maharashtra",
+      gstin: "22AAAAA0000A1Z5",
+      gstregistrationtype: "Regular",
+      pan: "AAAAA0000A",
+      istdsapplicable: "Yes",
+      tdssection: "194C",
     });
 
     // Style the header row
     worksheet.getRow(1).font = { bold: true };
     worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFE6E6FA' }
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE6E6FA" },
     };
 
     // Set response headers
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="vendor_import_template.xlsx"');
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="vendor_import_template.xlsx"',
+    );
 
     // Write to response
     await workbook.xlsx.write(res);
     res.end();
-
   } catch (err) {
-    console.error('Error generating template:', err);
+    console.error("Error generating template:", err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
@@ -546,16 +566,17 @@ exports.importVendors = async (req, res) => {
       return res.status(403).json({ message: "Not allowed to create vendors" });
     }
 
-    if (!file.originalname.toLowerCase().endsWith('.csv')) {
+    if (!file.originalname.toLowerCase().endsWith(".csv")) {
       return res.status(400).json({ message: "Please upload a CSV file." });
     }
 
-    const fileContent = file.buffer.toString('utf8');
+    const fileContent = file.buffer.toString("utf8");
     const records = parseCSV(fileContent);
 
-
     if (records.length === 0) {
-      return res.status(400).json({ message: "CSV file is empty or could not be parsed." });
+      return res
+        .status(400)
+        .json({ message: "CSV file is empty or could not be parsed." });
     }
 
     let importedCount = 0;
@@ -564,29 +585,29 @@ exports.importVendors = async (req, res) => {
     // Define valid GST types
     const validGstTypes = [
       "Regular",
-      "Composition", 
+      "Composition",
       "Unregistered",
       "Consumer",
       "Overseas",
       "Special Economic Zone",
-      "Unknown"
+      "Unknown",
     ];
 
     // Mapping from common terms to your schema terms
     const gstTypeMapping = {
-      'Registered': 'Regular',
-      'REGISTERED': 'Regular',
-      'registered': 'Regular',
-      'Composition': 'Composition',
-      'COMPOSITION': 'Composition',
-      'composition': 'Composition',
-      'Unregistered': 'Unregistered',
-      'UNREGISTERED': 'Unregistered',
-      'unregistered': 'Unregistered',
-      'Consumer': 'Consumer',
-      'Overseas': 'Overseas',
-      'Special Economic Zone': 'Special Economic Zone',
-      'Unknown': 'Unknown'
+      Registered: "Regular",
+      REGISTERED: "Regular",
+      registered: "Regular",
+      Composition: "Composition",
+      COMPOSITION: "Composition",
+      composition: "Composition",
+      Unregistered: "Unregistered",
+      UNREGISTERED: "Unregistered",
+      unregistered: "Unregistered",
+      Consumer: "Consumer",
+      Overseas: "Overseas",
+      "Special Economic Zone": "Special Economic Zone",
+      Unknown: "Unknown",
     };
 
     // Process each record
@@ -597,72 +618,103 @@ exports.importVendors = async (req, res) => {
       try {
         // Normalize column names to handle variations (like customer import does)
         const normalizedRow = {};
-        Object.keys(row).forEach(key => {
-          const normalizedKey = key.toLowerCase()
-            .replace(/\s+/g, '')
-            .replace(/[^\w]/g, '')
-            .replace(/\*/g, '');
+        Object.keys(row).forEach((key) => {
+          const normalizedKey = key
+            .toLowerCase()
+            .replace(/\s+/g, "")
+            .replace(/[^\w]/g, "")
+            .replace(/\*/g, "");
           normalizedRow[normalizedKey] = row[key];
         });
 
-
         // Map columns (handle variations in column names)
         const vendorData = {
-          vendorName: normalizedRow.vendorname || normalizedRow.name || row['Vendor Name'] || '',
-          contactNumber: normalizedRow.contactnumber || normalizedRow.contact || normalizedRow.phone || '',
-          email: normalizedRow.email || '',
-          address: normalizedRow.address || '',
-          city: normalizedRow.city || '',
-          state: normalizedRow.state || '',
-          gstin: normalizedRow.gstin || '',
-          gstRegistrationType: normalizedRow.gstregistrationtype || normalizedRow.gsttype || 'Unregistered',
-          pan: normalizedRow.pan || '',
-          isTDSApplicable: (normalizedRow.istdsapplicable || normalizedRow.tdsapplicable || 'no').toString().toLowerCase() === 'yes',
-          tdsSection: normalizedRow.tdssection || '',
+          vendorName:
+            normalizedRow.vendorname ||
+            normalizedRow.name ||
+            row["Vendor Name"] ||
+            "",
+          contactNumber:
+            normalizedRow.contactnumber ||
+            normalizedRow.contact ||
+            normalizedRow.phone ||
+            "",
+          email: normalizedRow.email || "",
+          address: normalizedRow.address || "",
+          city: normalizedRow.city || "",
+          state: normalizedRow.state || "",
+          gstin: normalizedRow.gstin || "",
+          gstRegistrationType:
+            normalizedRow.gstregistrationtype ||
+            normalizedRow.gsttype ||
+            "Unregistered",
+          pan: normalizedRow.pan || "",
+          isTDSApplicable:
+            (
+              normalizedRow.istdsapplicable ||
+              normalizedRow.tdsapplicable ||
+              "no"
+            )
+              .toString()
+              .toLowerCase() === "yes",
+          tdsSection: normalizedRow.tdssection || "",
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };
 
         // Validate required fields
-        if (!vendorData.vendorName || vendorData.vendorName.trim() === '') {
+        if (!vendorData.vendorName || vendorData.vendorName.trim() === "") {
           errors.push(`Row ${rowNumber}: Vendor Name is required`);
           continue;
         }
 
         // Normalize GST registration type
-        if (vendorData.gstRegistrationType && gstTypeMapping[vendorData.gstRegistrationType]) {
-          vendorData.gstRegistrationType = gstTypeMapping[vendorData.gstRegistrationType];
+        if (
+          vendorData.gstRegistrationType &&
+          gstTypeMapping[vendorData.gstRegistrationType]
+        ) {
+          vendorData.gstRegistrationType =
+            gstTypeMapping[vendorData.gstRegistrationType];
         }
 
         // Validate GST Registration Type against actual schema enum
-        if (vendorData.gstRegistrationType && !validGstTypes.includes(vendorData.gstRegistrationType)) {
-          errors.push(`Row ${rowNumber}: Invalid GST registration type "${vendorData.gstRegistrationType}". Must be one of: ${validGstTypes.join(', ')}`);
+        if (
+          vendorData.gstRegistrationType &&
+          !validGstTypes.includes(vendorData.gstRegistrationType)
+        ) {
+          errors.push(
+            `Row ${rowNumber}: Invalid GST registration type "${vendorData.gstRegistrationType}". Must be one of: ${validGstTypes.join(", ")}`,
+          );
           continue;
         }
 
         // Clear GSTIN if unregistered
-        if (vendorData.gstRegistrationType === 'Unregistered') {
-          vendorData.gstin = '';
+        if (vendorData.gstRegistrationType === "Unregistered") {
+          vendorData.gstin = "";
         }
 
         // Validate TDS data
         if (vendorData.isTDSApplicable) {
-          if (!vendorData.tdsSection || vendorData.tdsSection.trim() === '') {
-            errors.push(`Row ${rowNumber}: TDS Section is required when TDS is applicable`);
+          if (!vendorData.tdsSection || vendorData.tdsSection.trim() === "") {
+            errors.push(
+              `Row ${rowNumber}: TDS Section is required when TDS is applicable`,
+            );
             continue;
           }
         } else {
-          vendorData.tdsSection = '';
+          vendorData.tdsSection = "";
         }
 
         // Check for duplicates (vendor name within same client)
         const existingVendor = await Vendor.findOne({
           vendorName: vendorData.vendorName.trim(),
-          createdByClient: req.auth.clientId
+          createdByClient: req.auth.clientId,
         });
 
         if (existingVendor) {
-          errors.push(`Row ${rowNumber}: Vendor name '${vendorData.vendorName}' already exists`);
+          errors.push(
+            `Row ${rowNumber}: Vendor name '${vendorData.vendorName}' already exists`,
+          );
           continue;
         }
 
@@ -678,16 +730,19 @@ exports.importVendors = async (req, res) => {
           vendorName: savedVendor.vendorName,
           entryId: savedVendor._id,
         });
-
       } catch (error) {
         console.error(`Error processing row ${rowNumber}:`, error);
         if (error.code === 11000) {
           const field = Object.keys(error.keyValue)[0];
-          errors.push(`Row ${rowNumber}: Duplicate ${field} - ${error.keyValue[field]}`);
-        } else if (error.name === 'ValidationError') {
+          errors.push(
+            `Row ${rowNumber}: Duplicate ${field} - ${error.keyValue[field]}`,
+          );
+        } else if (error.name === "ValidationError") {
           // Handle mongoose validation errors
-          const validationErrors = Object.values(error.errors).map(err => err.message);
-          errors.push(`Row ${rowNumber}: ${validationErrors.join(', ')}`);
+          const validationErrors = Object.values(error.errors).map(
+            (err) => err.message,
+          );
+          errors.push(`Row ${rowNumber}: ${validationErrors.join(", ")}`);
         } else {
           errors.push(`Row ${rowNumber}: ${error.message}`);
         }
@@ -695,28 +750,27 @@ exports.importVendors = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'Import completed',
+      message: "Import completed",
       importedCount: importedCount,
       totalCount: records.length,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
     });
-
   } catch (error) {
     console.error("Error importing vendors:", error);
-    return res.status(500).json({ 
-      message: "Error importing vendors.", 
-      error: error.message 
+    return res.status(500).json({
+      message: "Error importing vendors.",
+      error: error.message,
     });
   }
 };
 
 // Use the same parseCSV function as customer import
 function parseCSV(content) {
-  const lines = content.split('\n').filter(line => line.trim() !== '');
-  
+  const lines = content.split("\n").filter((line) => line.trim() !== "");
+
   if (lines.length < 2) return []; // Need at least header and one data row
 
-  const headers = lines[0].split(',').map(header => header.trim());
+  const headers = lines[0].split(",").map((header) => header.trim());
   const records = [];
 
   for (let i = 1; i < lines.length; i++) {
@@ -725,30 +779,30 @@ function parseCSV(content) {
 
     // More robust CSV parsing that handles quoted fields with commas
     const values = [];
-    let current = '';
+    let current = "";
     let inQuotes = false;
-    
+
     for (let j = 0; j < line.length; j++) {
       const char = line[j];
       const nextChar = line[j + 1];
-      
+
       if (char === '"') {
         // Toggle quote state
         inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
+      } else if (char === "," && !inQuotes) {
         // End of field
         values.push(current.trim());
-        current = '';
+        current = "";
       } else {
         current += char;
       }
     }
-    
+
     // Push the last field
     values.push(current.trim());
 
     // Remove quotes from values if present
-    const cleanValues = values.map(value => {
+    const cleanValues = values.map((value) => {
       if (value.startsWith('"') && value.endsWith('"')) {
         return value.slice(1, -1);
       }
@@ -756,13 +810,13 @@ function parseCSV(content) {
     });
 
     const record = {};
-    
+
     headers.forEach((header, index) => {
-      record[header] = cleanValues[index] || '';
+      record[header] = cleanValues[index] || "";
     });
-    
+
     // Only add non-empty records (at least one field has value)
-    const hasData = Object.values(record).some(value => value !== '');
+    const hasData = Object.values(record).some((value) => value !== "");
     if (hasData) {
       records.push(record);
     }

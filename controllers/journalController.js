@@ -61,11 +61,11 @@ async function ensureAuthCaps(req) {
 
 
 function companyAllowedForUser(req, companyId) {
-  if (userIsPriv(req)) return true;
+  if (req.auth?.role === "master" || req.auth?.role === "client") return true;
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
     : [];
-  return allowed.length === 0 || allowed.includes(String(companyId));
+  return allowed.includes(String(companyId));
 }
 
 function companyFilterForUser(req, requestedCompanyId) {
@@ -203,12 +203,7 @@ exports.createJournal = async (req, res) => {
       console.error("⚠️ Socket Emit Failed (Journal Create):", socketError.message);
     }
 
-    // Access clientId and companyId after creation
     const clientId = journal.client.toString();
-
-    // Call the cache deletion function
-    // await deleteJournalEntryCache(clientId, companyId);
-    // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Journal entry created", journal });
   } catch (err) {
@@ -217,13 +212,12 @@ exports.createJournal = async (req, res) => {
   }
 };
 
-/** LIST (tenant-scoped, filters + pagination) */
 exports.getJournals = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
     const {
-      q,            // search in narration / debitAccount / creditAccount
+      q,            
       companyId,
       dateFrom,
       dateTo,
@@ -235,11 +229,29 @@ exports.getJournals = async (req, res) => {
     const perPage = Math.min(parseInt(limitRaw, 10) || 100, 500);
     const skip = (page - 1) * perPage;
 
-const where = {
+    const where = {
       client: req.auth.clientId,
     };
 
     const user = req.auth;
+    const { role, allowedCompanies, caps, userId } = req.auth;
+
+    // console.log("🔍 JOURNAL - User role:", role);
+    // console.log("🔍 JOURNAL - User ID:", userId);
+    // console.log("🔍 JOURNAL - Query companyId:", companyId);
+    // console.log("🔍 JOURNAL - Full caps object:", JSON.stringify(caps, null, 2));
+    // console.log("🔍 JOURNAL - canShowJournalEntries value:", caps?.canShowJournalEntries);
+
+    if (role === "user") {
+      const canShowAllJournals = caps?.canShowJournalEntries === true;
+      // console.log("🔍 JOURNAL - canShowAllJournals result:", canShowAllJournals);
+      if (!canShowAllJournals) {
+        console.log("🔍 JOURNAL - User can only see their own entries. Adding filter:", userId);
+        where.createdByUser = userId;
+      } else {
+        console.log("🔍 JOURNAL - User can see ALL journal entries - no filter added");
+      }
+    }
 
     // --- 2. Company Filtering (Fixed Logic) ---
     if (companyId && companyId !== "all" && companyId !== "undefined") {
@@ -270,7 +282,7 @@ const where = {
       }
     }
 
-   const { startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
     const finalStart = startDate || dateFrom;
     const finalEnd = endDate || dateTo;
 
@@ -292,6 +304,7 @@ const where = {
         { creditAccount: regex },
       ];
     }
+    // console.log("🔍 JOURNAL - Final where filter:", JSON.stringify(where, null, 2));
 
     // // ✅ Standardize key fields (use "client" not "clientId") and include all filters
     // const cacheKey = `journalEntries:${JSON.stringify({
@@ -312,7 +325,7 @@ const where = {
     // }
 
     const query = JournalEntry.find(where)
-      .sort({ date: -1, _id: -1 })
+      .sort({ date: -1, createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(perPage)
       .populate({ path: "company", select: "businessName" })
@@ -322,6 +335,7 @@ const where = {
       query,
       JournalEntry.countDocuments(where),
     ]);
+    // console.log(`🔍 JOURNAL - Found ${data.length} entries out of ${total} total`);
 
     // ✅ cache the right variable and keep shape consistent
     // await setToCache(cacheKey, { data, total });
@@ -532,7 +546,7 @@ exports.getJournalsByClient = async (req, res) => {
     // Fetch journal entries from the database
     const [data, total] = await Promise.all([
       JournalEntry.find(where)
-        .sort({ date: -1 })  // Sorting by date in descending order
+        .sort({ date: -1, createdAt: -1, _id: -1 })
         .skip(skip)  // Pagination: skip records for the current page
         .limit(perPage)  // Limit the number of records returned per page
         .populate({ path: "company", select: "businessName" })  // Populate company details

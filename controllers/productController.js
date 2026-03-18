@@ -469,34 +469,42 @@ exports.deleteProducts = async (req, res) => {
 exports.bulkDeleteProducts = async (req, res) => {
   try {
     const { productIds } = req.body;
+    const privileged = ["master", "client", "admin"].includes(req.auth.role);
 
     if (!Array.isArray(productIds) || productIds.length === 0) {
       return res.status(400).json({ message: "Product IDs array is required" });
     }
 
-    // ✅ authorize by tenant - fetch only this tenant's products
-    const products = await Product.find({
-      _id: { $in: productIds },
-      createdByClient: req.auth.clientId,
-    });
+    const normalizedProductIds = [...new Set(productIds.map(String).filter(Boolean))];
+    const productFilter = { _id: { $in: normalizedProductIds } };
+    if (!privileged) {
+      productFilter.createdByClient = req.auth.clientId;
+    }
 
-    // Check if all requested products belong to this tenant
-    if (products.length !== productIds.length) {
+    // ✅ Authorize products before delete. Privileged roles can operate across tenants.
+    const products = await Product.find(productFilter).select({ _id: 1 });
+
+    // Check if every requested id is present and authorized for this actor
+    if (products.length !== normalizedProductIds.length) {
       return res.status(403).json({ message: "Some products not found or not authorized to delete" });
     }
 
-     // ✅ NEW: DELETE STOCK BATCHES FOR ALL PRODUCTS
-    await StockBatch.deleteMany({
-      product: { $in: productIds },
-      clientId: req.auth.clientId
-    });
-    console.log(`✅ Deleted stock batches for ${productIds.length} products`);
+    const authorizedProductIds = products.map((p) => p._id);
+
+    // ✅ NEW: DELETE STOCK BATCHES FOR ALL PRODUCTS
+    const stockBatchDeleteFilter = { product: { $in: authorizedProductIds } };
+    if (!privileged) {
+      stockBatchDeleteFilter.clientId = req.auth.clientId;
+    }
+    await StockBatch.deleteMany(stockBatchDeleteFilter);
+    console.log(`✅ Deleted stock batches for ${authorizedProductIds.length} products`);
 
     // Delete the products
-    const result = await Product.deleteMany({
-      _id: { $in: productIds },
-      createdByClient: req.auth.clientId,
-    });
+    const deleteFilter = { _id: { $in: authorizedProductIds } };
+    if (!privileged) {
+      deleteFilter.createdByClient = req.auth.clientId;
+    }
+    const result = await Product.deleteMany(deleteFilter);
 
     return res.status(200).json({
       message: `${result.deletedCount} products deleted successfully`,

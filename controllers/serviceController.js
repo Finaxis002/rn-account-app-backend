@@ -3,6 +3,72 @@ const { resolveClientId } = require("./common/tenant");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
+function normalizeServiceCompanyIds(input) {
+  const toArray = (value) => {
+    if (value === undefined || value === null || value === "") return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (_) {
+          // Ignore parse errors and treat as single string id.
+        }
+      }
+      return [trimmed];
+    }
+    return [value];
+  };
+
+  return Array.from(
+    new Set(
+      toArray(input)
+        .map((item) => {
+          if (!item) return "";
+          if (typeof item === "string") return item.trim();
+          if (typeof item === "object") {
+            const id = item._id || item.id || "";
+            return String(id).trim();
+          }
+          return String(item).trim();
+        })
+        .filter(Boolean)
+    )
+  );
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildServiceCompanyScopeFilter(companyId) {
+  if (!companyId || companyId === "all") return {};
+
+  return {
+    $or: [
+      { companies: companyId },
+      { company: companyId },
+      {
+        $and: [
+          {
+            $or: [
+              { companies: { $exists: false } },
+              { companies: null },
+              { companies: { $size: 0 } },
+            ],
+          },
+          {
+            $or: [{ company: { $exists: false } }, { company: null }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 
 // Build message text per action
 function buildServiceNotificationMessage(action, { actorName, serviceName }) {
@@ -47,12 +113,87 @@ async function notifyAdminOnServiceAction({ req, action, serviceName, entryId })
 // Create
 exports.createService = async (req, res) => {
   try {
-    const { serviceName, amount, description, sac } = req.body;
+    const { serviceName, amount, description, sac, company, companies } = req.body;
+    const normalizedCompanies = normalizeServiceCompanyIds(
+      companies !== undefined ? companies : company
+    );
+    const normalizedName = String(serviceName || "").trim();
+
+    const existingService = normalizedName
+      ? await Service.findOne({
+          createdByClient: req.auth.clientId,
+          serviceName: {
+            $regex: new RegExp(`^${escapeRegex(normalizedName)}$`, "i"),
+          },
+        })
+      : null;
+
+    if (existingService) {
+      const currentCompanyIds = normalizeServiceCompanyIds(
+        Array.isArray(existingService.companies) && existingService.companies.length > 0
+          ? existingService.companies
+          : existingService.company
+      );
+
+      let mergedCompanyIds = currentCompanyIds;
+
+      if (normalizedCompanies.length === 0) {
+        // New request asks for global availability.
+        mergedCompanyIds = [];
+      } else if (currentCompanyIds.length > 0) {
+        mergedCompanyIds = Array.from(
+          new Set([...currentCompanyIds, ...normalizedCompanies])
+        );
+      }
+      // If current service is already global (no companies), keep it global.
+
+      existingService.company =
+        mergedCompanyIds.length === 1 ? mergedCompanyIds[0] : undefined;
+      existingService.companies = mergedCompanyIds;
+
+      // Keep service details fresh when user creates same service from another screen.
+      if (typeof amount === "number" && amount >= 0) existingService.amount = amount;
+      if (typeof description === "string") existingService.description = description;
+      if (sac !== undefined) existingService.sac = sac;
+
+      await existingService.save();
+
+      if (global.io) {
+        global.io.to(`client-${req.auth.clientId}`).emit("service-update", {
+          message: "Service updated",
+          serviceId: existingService._id,
+          serviceName: existingService.serviceName,
+          action: "update",
+        });
+        global.io.to("all-inventory-updates").emit("service-update", {
+          message: "Service updated",
+          serviceId: existingService._id,
+          serviceName: existingService.serviceName,
+          action: "update",
+          clientId: req.auth.clientId,
+        });
+      }
+
+      await notifyAdminOnServiceAction({
+        req,
+        action: "update",
+        serviceName: existingService.serviceName,
+        entryId: existingService._id,
+      });
+
+      return res.status(200).json({
+        message: "Service already exists. Company mapping updated.",
+        service: existingService,
+      });
+    }
+
     const service = await Service.create({
       serviceName,
       amount,
       description,
       sac,
+      company: normalizedCompanies.length === 1 ? normalizedCompanies[0] : undefined,
+      companies: normalizedCompanies,
       createdByClient: req.auth.clientId,  // TENANT
       createdByUser: req.auth.userId,    // ACTOR (remove if not in schema)
     });
@@ -103,27 +244,34 @@ exports.getServices = async (req, res) => {
  const {
  q,
  companyId,
+ company,
  page = 1,
  limit = 100,
- } = req.query;
+  } = req.query;
  const isPrivileged = ["master", "admin"].includes(req.auth.role);
  if (!isPrivileged && requestedClientId !== req.auth.clientId) {
  return res.status(403).json({ message: "Not authorized to view this client's data." });
  }
  const where = { createdByClient: requestedClientId };
-if (q) {
+ if (q) {
  where.serviceName = { $regex: String(q), $options: "i" };
  }
- if (companyId) {
-
- where.company = companyId; 
- }
- const perPage = Math.min(Number(limit) || 100, 500);
- const skip = (Number(page) - 1) * perPage;
- const [items, total] = await Promise.all([
- Service.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+  const resolvedCompanyId = companyId || company;
+  if (resolvedCompanyId && resolvedCompanyId !== "all") {
+ Object.assign(where, buildServiceCompanyScopeFilter(String(resolvedCompanyId)));
+  }
+  const perPage = Math.min(Number(limit) || 100, 500);
+  const skip = (Number(page) - 1) * perPage;
+  const [items, total] = await Promise.all([
+ Service.find(where)
+ .populate("company")
+ .populate("companies")
+ .sort({ createdAt: -1 })
+ .skip(skip)
+ .limit(perPage)
+ .lean(),
  Service.countDocuments(where),
- ]);
+  ]);
  return res.json({
 services: items,
  total,
@@ -147,11 +295,25 @@ exports.updateService = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { serviceName, amount, description, sac } = req.body;
+    const { serviceName, amount, description, sac, company, companies } = req.body;
     if (serviceName) service.serviceName = serviceName;
     if (typeof amount === "number" && amount >= 0) service.amount = amount;
     if (typeof description === "string") service.description = description;
     if (sac !== undefined) service.sac = sac;
+
+    const hasCompany =
+      Object.prototype.hasOwnProperty.call(req.body, "company") ||
+      Object.prototype.hasOwnProperty.call(req.body, "companies");
+    if (hasCompany) {
+      const normalizedCompanies = normalizeServiceCompanyIds(
+        Object.prototype.hasOwnProperty.call(req.body, "companies")
+          ? companies
+          : company
+      );
+      service.companies = normalizedCompanies;
+      service.company =
+        normalizedCompanies.length === 1 ? normalizedCompanies[0] : undefined;
+    }
 
     await service.save();
 
@@ -250,7 +412,9 @@ exports.getServiceById = async (req, res) => {
     const doc = await Service.findOne({
       _id: req.params.id,
       createdByClient: req.auth.clientId,
-    });
+    })
+      .populate("company")
+      .populate("companies");
     if (!doc) return res.status(404).json({ message: "Service not found" });
 
     const service = { ...doc.toObject(), name: doc.serviceName };
@@ -392,6 +556,10 @@ exports.importServices = async (req, res) => {
       return res.status(400).json({ message: "File contains too many rows. Maximum allowed is 1000 rows." });
     }
 
+    const importCompanyIds = normalizeServiceCompanyIds(
+      req.body?.companyIds ?? req.body?.companyId ?? req.body?.company
+    );
+
     let importedCount = 0;
     const errors = [];
 
@@ -407,6 +575,8 @@ exports.importServices = async (req, res) => {
           amount: row.amount,
           description: row.description,
           sac: row.sac || row.saccode,
+          company: importCompanyIds.length === 1 ? importCompanyIds[0] : undefined,
+          companies: importCompanyIds,
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };

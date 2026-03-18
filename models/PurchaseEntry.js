@@ -19,6 +19,23 @@ const purchaseServiceSchema = new mongoose.Schema({
   serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
+  quantity: { type: Number, default: 1, min: 0 },
+  unitType: { type: String, default: "Hours" },
+  pricePerUnit: { type: Number, default: 0, min: 0 },
+  discountType: { type: String, enum: ["fixed", "percentage"], default: "fixed" },
+  discountValue: { type: Number, default: 0 },
+  serviceStartDate: { type: Date },
+  serviceDueDate: { type: Date },
+  travelDate: { type: Date },
+  travelFrom: { type: String, trim: true, default: "" },
+  travelTo: { type: String, trim: true, default: "" },
+  vehicleType: { type: String, trim: true, default: "" },
+  vehicleNumber: { type: String, trim: true, default: "" },
+  fixedCharges: { type: Number, default: 0, min: 0 },
+  variableQty: { type: Number, default: 0, min: 0 },
+  variableUnit: { type: String, trim: true, default: "Km" },
+  variableRate: { type: Number, default: 0, min: 0 },
+  variableCharges: { type: Number, default: 0, min: 0 },
     // New fields to store GST-related information for services
   gstPercentage: { type: Number, default: 18 },  // Default GST percentage for services
   lineTax: { type: Number, required: true, min: 0 }, // GST amount for this service line

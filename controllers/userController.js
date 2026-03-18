@@ -132,11 +132,9 @@ exports.createUser = async (req, res) => {
     const maxUsers = permission?.maxUsers ?? 1; // fallback to 1 if no permission found
     const userCount = await User.countDocuments({ createdByClient: clientId });
     if (userCount >= maxUsers) {
-      return res
-        .status(403)
-        .json({
-          message: "User creation limit reached. Please contact admin.",
-        });
+      return res.status(403).json({
+        message: "User creation limit reached. Please contact admin.",
+      });
     }
 
     // 4) create user
@@ -431,6 +429,18 @@ exports.resetPassword = async (req, res) => {
     doc.password = await bcrypt.hash(newPassword, salt);
     doc.passwordChangedAt = new Date(); // Optional: helps with token invalidation
     await doc.save();
+
+    // Emit socket event to notify the user that their password was changed
+    if (global.io) {
+      console.log("📡 Emitting password-reset event for user:", doc._id);
+
+      // Emit ONLY to the specific user whose password was changed
+      global.io.to(`user-${doc._id}`).emit("password-reset", {
+        message: "Your password has been changed. Please login again.",
+        userId: doc._id,
+        action: "password-changed",
+      });
+    }
 
     return res.json({ message: "Password reset successfully." });
   } catch (error) {
