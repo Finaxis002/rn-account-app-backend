@@ -1,0 +1,72 @@
+# name: CI/CD Pipeline
+
+# on:
+#   push:
+#     branches:
+#       - main
+
+# jobs:
+#   deploy:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       # Step 1: Check out code from GitHub
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           token: ${{ secrets.GITHUB_TOKEN }}
+
+#       # Step 2: Set up Node.js
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: '22'
+
+#       # Step 3: Install dependencies
+#       - name: Install dependencies
+#         run: |
+#           npm install
+
+#       # Step 4: Deploy to VPS using SSH
+#       - name: Deploy to VPS using SSH
+#         env:
+#           HOST: ${{ secrets.VPS_HOST }}
+#           USER: ${{ secrets.VPS_USER }}
+#           PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+#         run: |
+#           mkdir -p ~/.ssh
+#           echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
+#           chmod 600 ~/.ssh/id_rsa
+#           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+
+#           ssh $USER@$HOST << 'EOF'
+#             cd /home/accountAppBackend || exit
+            
+#             # Switch repository to SSH URL to avoid authentication issues
+#             git remote set-url origin git@github.com:Finaxis002/accountAppBackend.git
+            
+#             git stash || exit
+#             git pull origin main || exit
+#             npm install || exit
+
+#             # Clean up existing notifications before creating new one
+#             echo "🧹 Cleaning up existing notifications..."
+#             node scripts/cleanupTestNotifications.js || echo "⚠️  Cleanup failed, but deployment continues"
+
+#             # Create update notification for new deployment
+#             echo "🚀 Creating deployment notification..."
+#             node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
+
+#             pm2 restart accountbackend || exit
+
+#             # Wait for server to be ready after restart
+#             echo "⏳ Waiting for server to be ready..."
+#             for i in {1..5}; do
+#               if curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
+#                 echo "✅ Server is ready!"
+#                 break
+#               fi
+#               echo "⏳ Server not ready yet, waiting... ($i/5)"
+#               sleep 5
+#             done
+#           EOF
